@@ -15,18 +15,16 @@
  */
 
 import { Icon, InlineIcon } from '@iconify/react';
-import {
-  Box,
-  Chip,
-  FormControl,
-  IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
-  TextField,
-  Typography,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
+import FormControl from '@mui/material/FormControl';
+import IconButton from '@mui/material/IconButton';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
 import { useTheme } from '@mui/material/styles';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
@@ -44,18 +42,8 @@ import { findKubeconfigByClusterName, updateStatelessClusterKubeconfig } from '.
 import { Link, Loader, NameValueTable, SectionBox } from '../../common';
 import ConfirmButton from '../../common/ConfirmButton';
 import Empty from '../../common/EmptyContent';
-
-function isValidNamespaceFormat(namespace: string) {
-  // We allow empty strings just because that's the default value in our case.
-  if (!namespace) {
-    return true;
-  }
-
-  // Validates that the namespace is a valid DNS-1123 label and returns a boolean.
-  // https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#dns-label-names
-  const regex = new RegExp('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$');
-  return regex.test(namespace);
-}
+import NodeShellSettings from './NodeShellSettings';
+import { isValidNamespaceFormat } from './util';
 
 function isValidClusterNameFormat(name: string) {
   // We allow empty isValidClusterNameFormat just because that's the default value in our case.
@@ -339,12 +327,7 @@ export default function SettingsCluster() {
 
   return (
     <>
-      <SectionBox
-        title={t('translation|Cluster Settings ({{ clusterName }})', {
-          clusterName: cluster,
-        })}
-        backLink
-      >
+      <SectionBox title={t('translation|Cluster Settings')} backLink>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <ClusterSelector clusters={clusters} currentCluster={cluster} />
           <Link
@@ -534,6 +517,7 @@ export default function SettingsCluster() {
           ]}
         />
       </SectionBox>
+      <NodeShellSettings cluster={cluster} />
       {removableCluster && isElectron() && (
         <Box pt={2} textAlign="right">
           <ConfirmButton

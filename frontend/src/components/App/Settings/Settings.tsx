@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import { Box, MenuItem, Select, Switch } from '@mui/material';
+import Box from '@mui/material/Box';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
+import Switch from '@mui/material/Switch';
 import { capitalize } from 'lodash';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -38,10 +41,12 @@ export default function Settings() {
   const storedTimezone = settingsObj.timezone;
   const storedRowsPerPageOptions = settingsObj.tableRowsPerPageOptions;
   const storedSortSidebar = settingsObj.sidebarSortAlphabetically;
+  const storedUseEvict = settingsObj.useEvict;
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
     storedTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
   const [sortSidebar, setSortSidebar] = useState<boolean>(storedSortSidebar);
+  const [useEvict, setUseEvict] = useState<boolean>(storedUseEvict);
   const dispatch = useDispatch();
   const themeName = useTypedSelector(state => state.theme.name);
   const appThemes = useAppThemes();
@@ -61,6 +66,14 @@ export default function Settings() {
       })
     );
   }, [sortSidebar]);
+
+  useEffect(() => {
+    dispatch(
+      setAppSettings({
+        useEvict: useEvict,
+      })
+    );
+  }, [useEvict]);
 
   return (
     <SectionBox
@@ -138,6 +151,16 @@ export default function Settings() {
                 color="primary"
                 checked={sortSidebar}
                 onChange={e => setSortSidebar(e.target.checked)}
+              />
+            ),
+          },
+          {
+            name: t('translation|Use evict for pod deletion'),
+            value: (
+              <Switch
+                color="primary"
+                checked={useEvict}
+                onChange={e => setUseEvict(e.target.checked)}
               />
             ),
           },
