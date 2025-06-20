@@ -55,12 +55,11 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
-
-	"golang.org/x/oauth2"
 )
 
 type HeadlampConfig struct {
@@ -1434,17 +1433,43 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		r.URL.Path = mux.Vars(r)["api"]
 		r.URL.Scheme = clusterURL.Scheme
 
+		// Initializes the responseCapture which is responsible for storing the response body
+		rcw := Initialize(w)
+
+		// Generating Key
+		key, err := generateKey(r.URL, contextKey)
+		if err != nil {
+			c.handleError(w, context.Background(), span, err, "Error", http.StatusInternalServerError)
+		}
+
+		c.telemetryHandler.RecordEvent(span, "key generated successfully!!")
 		// Process WebSocket protocol headers if present
 		processWebSocketProtocolHeader(r)
 		plugins.HandlePluginReload(c.cache, w)
 
-		if err = kContext.ProxyRequest(w, r); err != nil {
-			c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", "proxy_error"),
-				attribute.String("cluster", contextKey))
-			c.handleError(w, ctx, span, err, "failed to proxy request", http.StatusInternalServerError)
-
+		// It is checking whether the user is Authorized to access the resources.
+		isAllowed := isAllowed(r.URL, kContext, w, r)
+		if !isAllowed {
+			c.handleError(w, ctx, span, errors.New("user not Authorized"), "User not Authorized", http.StatusForbidden)
 			return
 		}
+
+		// Checking if the key is present in the cache if it is then it serve directly to client otherwise
+		// proceed to make actual requests to K8's
+		served := LoadfromCache(isAllowed, key, w)
+		if served {
+			return
+		}
+
+		c.telemetryHandler.RecordEvent(span, "Cache miss — proxying to Kubernetes API")
+
+		// Making Actual requests to k8 and then storing the resource body into the cache with TTL = 10min
+		err = RequestToK8sAndStore(kContext, r.URL, rcw, r, key)
+		if err != nil {
+			c.handleError(w, ctx, span, err, "Error", http.StatusInternalServerError)
+		}
+
+		c.telemetryHandler.RecordEvent(span, "Resource Stored into the cache successfully")
 
 		if c.telemetry != nil {
 			span.SetStatus(codes.Ok, "")
