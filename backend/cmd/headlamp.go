@@ -1392,28 +1392,32 @@ func (r *responseCapture) Write(b []byte) (int, error) {
 }
 
 func extractNamespace(rawURL string) (string, error) {
-	parsedUrl, err := url.Parse(rawURL)
+	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return "", err
 	}
 
-	namespace := parsedUrl.Query().Get("namespace")
+	namespace := parsedURL.Query().Get("namespace")
+
 	return namespace, nil
 }
 
 func getResponseBody(bodyBytes []byte, encoding string) (string, error) {
 	var dcmpBody []byte
+
 	if encoding == "gzip" {
 		reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
 		if err != nil {
-			fmt.Println("Failed to create gzip reader:", err)
+			return "", fmt.Errorf("failed to create gzip reader: %w", err)
 		}
+
 		decompressedBody, err := io.ReadAll(reader)
 		if err != nil {
-			fmt.Println("Failed to decompress body: ", err)
+			return "", fmt.Errorf("failed to decompress body: %w", err)
 		}
 
 		dcmpBody = decompressedBody
+
 		reader.Close()
 	} else {
 		dcmpBody = bodyBytes
@@ -1489,14 +1493,21 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		}
 
 		namespace, err := extractNamespace(r.URL.String())
+		if err != nil {
+			c.handleError(w, ctx, span, err, "Failed to extract namespace", http.StatusBadRequest)
+			return
+		}
+
 		k := &cache.Key{
 			Kind:      r.URL.Path,
 			Namespace: namespace,
 			Cluster:   contextKey,
 		}
+
 		key, err := k.SHA()
 		if err != nil {
 			c.handleError(w, ctx, span, err, "Error while computing key", http.StatusInternalServerError)
+			return
 		}
 
 		// Process WebSocket protocol headers if present
@@ -1504,6 +1515,7 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		plugins.HandlePluginReload(c.cache, w)
 
 		var failure bool
+
 		if strings.Contains(r.URL.Path, "selfsubjectrulesreviews") {
 			ssarResponse := &responseCapture{
 				ResponseWriter: w,
@@ -1534,14 +1546,19 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 			if err == nil && strings.TrimSpace(k8Resource) != "" {
 				c.telemetryHandler.RecordEvent(span, "Resource Request is hitting to cache")
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(k8Resource))
-				return
+
+				if _, err := w.Write([]byte(k8Resource)); err != nil {
+					c.handleError(w, ctx, span, err, "failed to write cached response", http.StatusInternalServerError)
+					return
+				}
 			}
 		}
+
 		c.telemetryHandler.RecordEvent(span, "Cache miss — proxying to Kubernetes API")
 
 		if !strings.Contains(r.URL.Path, "selfsubjectrulesreviews") {
 			c.telemetryHandler.RecordEvent(span, "Making actual API requests  ")
+
 			if err = kContext.ProxyRequest(rcw, r); err != nil {
 				c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", "proxy_error"),
 					attribute.String("cluster", contextKey))
@@ -1558,11 +1575,15 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		if err != nil {
 			c.handleError(w, ctx, span, err, "Failed to decompressed the resource body", http.StatusInternalServerError)
 		}
+
 		if !strings.Contains(r.URL.Path, "selfsubjectrulesreviews") {
-			if err = k8scache.SetWithTTL(context.Background(), key, string(dcmpBody), 10*time.Minute); err != nil {
-				c.handleError(w, ctx, span, err, "Failed to store the resource data inside the cache", http.StatusInternalServerError)
+			if err = k8scache.SetWithTTL(context.Background(), key, dcmpBody, 10*time.Minute); err != nil {
+				c.handleError(w, ctx, span, err,
+					"Failed to store the resource data inside the cache",
+					http.StatusInternalServerError)
 			}
 		}
+
 		if c.telemetry != nil {
 			span.SetStatus(codes.Ok, "")
 			c.telemetryHandler.RecordEvent(span, "Cluster API request completed")
