@@ -1522,10 +1522,12 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 				statusCode:     http.StatusOK,
 				body:           &bytes.Buffer{},
 			}
+
 			if err := kContext.ProxyRequest(ssarResponse, r); err != nil {
 				c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", "proxy_error"),
 					attribute.String("cluster", contextKey))
 				c.handleError(w, ctx, span, err, "failed to proxy request", http.StatusInternalServerError)
+				return
 			}
 
 			encoding := ssarResponse.Header().Get("Context-Encoding")
@@ -1534,10 +1536,15 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 			dcmp, err := getResponseBody(bodyBytes, encoding)
 			if err != nil {
 				c.handleError(w, ctx, span, err, "failed to get decompressed response body", http.StatusInternalServerError)
+
+				return
 			}
 
 			if failure = strings.Contains(dcmp, "Failure"); failure {
-				c.handleError(w, ctx, span, err, "User is not authenticated ", http.StatusInternalServerError)
+				authErr := errors.New("User is not authenticated")
+				c.handleError(w, ctx, span, authErr, "User is not authenticated ", http.StatusInternalServerError)
+
+				return
 			}
 		}
 
@@ -1551,6 +1558,7 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 					c.handleError(w, ctx, span, err, "failed to write cached response", http.StatusInternalServerError)
 					return
 				}
+				return
 			}
 		}
 
