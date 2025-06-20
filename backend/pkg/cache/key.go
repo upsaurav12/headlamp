@@ -22,6 +22,7 @@ func HashObject(any interface{}) (string, error) {
 	}
 
 	sha := sha256.Sum256(out)
+
 	return base32.StdEncoding.EncodeToString(sha[:]), nil
 }
 
