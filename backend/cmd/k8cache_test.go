@@ -145,14 +145,14 @@ func TestGetResponseBody(t *testing.T) {
 func TestGenerateKey(t *testing.T) {
 	t.Run("url was valid ", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := generateKey(u, "mycluster")
+		key, err := generateKey(u, "mycluster", "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})
 
 	t.Run("empty cluster", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := generateKey(u, "")
+		key, err := generateKey(u, "", "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})

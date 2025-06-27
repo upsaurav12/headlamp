@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 )
 
-type ResourceKind string
+// type ResourceKind string
 
 type Key struct {
-	Kind        string
-	Namespace   string
-	Cluster     string
-	ListOptions string
+	Kind      string
+	Namespace string
+	Context   string
+	Token     string
 }
 
 func HashObject(any interface{}) (string, error) {

@@ -1433,11 +1433,12 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		r.URL.Path = mux.Vars(r)["api"]
 		r.URL.Scheme = clusterURL.Scheme
 
+		_, token := parseClusterAndToken(r)
 		// Initializes the responseCapture which is responsible for storing the response body
 		rcw := Initialize(w)
 
 		// Generating Key
-		key, err := generateKey(r.URL, contextKey)
+		key, err := generateKey(r.URL, contextKey, token)
 		if err != nil {
 			c.handleError(w, context.Background(), span, err, "Error", http.StatusInternalServerError)
 		}
@@ -1456,8 +1457,14 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 
 		// Checking if the key is present in the cache if it is then it serve directly to client otherwise
 		// proceed to make actual requests to K8's
-		served := LoadfromCache(isAllowed, key, w)
+		served, err := LoadfromCache(isAllowed, key, w)
 		if served {
+			c.telemetryHandler.RecordEvent(span, "Serving from Cache")
+			return
+		}
+
+		if err != nil {
+			c.handleError(w, ctx, span, err, "Error While Loading from cache", http.StatusInternalServerError)
 			return
 		}
 
