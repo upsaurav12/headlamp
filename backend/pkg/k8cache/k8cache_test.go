@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package main
+package k8cache_test
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,13 +31,13 @@ func TestInitialize(t *testing.T) {
 	t.Run("initializes responseCapture with defaults", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
 
-		rc := Initialize(recorder)
+		rc := k8cache.Initialize(recorder)
 
 		assert.NotNil(t, rc)
-		assert.Equal(t, http.StatusOK, rc.statusCode)
+		assert.Equal(t, http.StatusOK, rc.StatusCode)
 		assert.Equal(t, recorder, rc.ResponseWriter)
-		assert.NotNil(t, rc.body)
-		assert.Equal(t, 0, rc.body.Len())
+		assert.NotNil(t, rc.Body)
+		assert.Equal(t, 0, rc.Body.Len())
 	})
 }
 
@@ -73,7 +74,7 @@ func TestExtractNamespace(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ns, err := ExtractNamespace(tc.rawURL)
+			ns, err := k8cache.ExtractNamespace(tc.rawURL)
 
 			assert.Equal(t, tc.wantNS, ns)
 
@@ -133,7 +134,7 @@ func TestGetResponseBody(t *testing.T) {
 			assert.NoError(t, err)
 			gz.Close()
 
-			body, err := GetResponseBody(buf.Bytes(), tc.contentEncoding)
+			body, err := k8cache.GetResponseBody(buf.Bytes(), tc.contentEncoding)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.responseBody, body)
 		})
@@ -145,14 +146,14 @@ func TestGetResponseBody(t *testing.T) {
 func TestGenerateKey(t *testing.T) {
 	t.Run("url was valid ", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := generateKey(u, "mycluster", "")
+		key, err := k8cache.GenerateKey(u, "mycluster", "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})
 
 	t.Run("empty cluster", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := generateKey(u, "", "")
+		key, err := k8cache.GenerateKey(u, "", "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})
