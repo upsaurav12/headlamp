@@ -10,7 +10,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package main
+package k8cache
 
 import (
 	"bytes"
@@ -29,12 +29,12 @@ import (
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 )
 
-var k8scache = cache.New[string]()
+// var k8scache = cache.New[string]()
 
 type responseCapture struct {
 	http.ResponseWriter
-	statusCode int
-	body       *bytes.Buffer
+	StatusCode int
+	Body       *bytes.Buffer
 }
 
 type CachedResponseData struct {
@@ -44,12 +44,12 @@ type CachedResponseData struct {
 }
 
 func (r *responseCapture) WriteHeader(code int) {
-	r.statusCode = code
+	r.StatusCode = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *responseCapture) Write(b []byte) (int, error) {
-	r.body.Write(b)
+	r.Body.Write(b)
 	return r.ResponseWriter.Write(b)
 }
 
@@ -57,8 +57,8 @@ func (r *responseCapture) Write(b []byte) (int, error) {
 func Initialize(w http.ResponseWriter) *responseCapture {
 	return &responseCapture{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
-		statusCode:     http.StatusOK,
+		Body:           &bytes.Buffer{},
+		StatusCode:     http.StatusOK,
 	}
 }
 
@@ -104,13 +104,13 @@ func GetResponseBody(bodyBytes []byte, encoding string) (string, error) {
 // This function generates a unique cache key based on the requested URL's path (kind of resource),
 // Namespace, and the kubernetes context. this ensures that the cached response are specific to the exact
 // resource, namespace ,and cluster being requested.
-func generateKey(url *url.URL, contextKey string, token string) (string, error) {
+func GenerateKey(url *url.URL, contextKey string, token string) (string, error) {
 	namespace, err := ExtractNamespace(url.String())
 	if err != nil {
 		return "", err
 	}
 
-	k := &cache.Key{Kind: url.Path, Namespace: namespace, Context: contextKey, Token: token}
+	k := Key{Kind: url.Path, Namespace: namespace, Context: contextKey, Token: token}
 
 	key, err := k.SHA()
 	if err != nil {
@@ -179,7 +179,7 @@ func setHeadersTocache(responseHeaders http.Header, encoding string) http.Header
 // This function checks the user's permission to access the resource.
 // If the user is authorized and has permission to view the resources, it returns true.
 // Otherwise, it returns false if authorization fails.
-func isAllowed(url *url.URL,
+func IsAllowed(url *url.URL,
 	kContext *kubeconfig.Context,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -193,7 +193,7 @@ func isAllowed(url *url.URL,
 		}
 
 		encoding := ssarResponse.Header().Get("Content-Encoding")
-		bodyBytes := ssarResponse.body.Bytes()
+		bodyBytes := ssarResponse.Body.Bytes()
 
 		dcmp, err := GetResponseBody(bodyBytes, encoding)
 		if err != nil {
@@ -211,7 +211,7 @@ func isAllowed(url *url.URL,
 // If the user has the permission to view the resources then it will check if the generated key is found
 // in the cache if the key is present in the cache then it will return directly to the client in []byte form
 // and returns true ,Otherwise it will return false.
-func LoadfromCache(isAllowed bool, key string, w http.ResponseWriter) (bool, error) {
+func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w http.ResponseWriter) (bool, error) {
 	if !isAllowed {
 		return false, errors.New("user not authenticated")
 	}
@@ -239,7 +239,7 @@ func LoadfromCache(isAllowed bool, key string, w http.ResponseWriter) (bool, err
 // If the key was not found inside the cache then this will make actual call to k8's
 // and this will capture the response body and convert the captured response to string.
 // After converting it will store the response with the key and TTL of 10*min.
-func RequestToK8sAndStore(kContext *kubeconfig.Context,
+func RequestToK8sAndStore(k8scache cache.Cache[string], kContext *kubeconfig.Context,
 	url *url.URL,
 	rcw *responseCapture,
 	r *http.Request,
@@ -254,7 +254,7 @@ func RequestToK8sAndStore(kContext *kubeconfig.Context,
 
 	capturedHeaders := rcw.Header()
 	encoding := capturedHeaders.Get("Content-Encoding")
-	bodyBytes := rcw.body.Bytes()
+	bodyBytes := rcw.Body.Bytes()
 
 	dcmpBody, err := GetResponseBody(bodyBytes, encoding)
 	if err != nil {
@@ -265,7 +265,7 @@ func RequestToK8sAndStore(kContext *kubeconfig.Context,
 
 	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
 		cachedData := CachedResponseData{
-			StatusCode: rcw.statusCode,
+			StatusCode: rcw.StatusCode,
 			Headers:    headersToCache,
 			Body:       dcmpBody,
 		}

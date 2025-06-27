@@ -49,6 +49,7 @@ import (
 
 	headlampcfg "github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/helm"
+	kcache "github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/logger"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/plugins"
@@ -99,6 +100,8 @@ const (
 	// TokenCacheFileName is the name of the token cache file.
 	TokenCacheFileName = "headlamp-token-cache"
 )
+
+var k8scache = cache.New[string]()
 
 type clientConfig struct {
 	Clusters                []Cluster `json:"clusters"`
@@ -1407,10 +1410,25 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		r.URL.Path = mux.Vars(r)["api"]
 		r.URL.Scheme = clusterURL.Scheme
 
+<<<<<<< HEAD
+=======
+		_, token := parseClusterAndToken(r)
+		// Initializes the responseCapture which is responsible for storing the response body
+		rcw := kcache.Initialize(w)
+
+		// Generating Key
+		key, err := kcache.GenerateKey(r.URL, contextKey, token)
+		if err != nil {
+			c.handleError(w, context.Background(), span, err, "Error", http.StatusInternalServerError)
+		}
+
+		c.telemetryHandler.RecordEvent(span, "key generated successfully!!")
+>>>>>>> 5b92da04 (backend: cache: added implementation in different package pkg/cache)
 		// Process WebSocket protocol headers if present
 		processWebSocketProtocolHeader(r)
 		plugins.HandlePluginReload(c.cache, w)
 
+<<<<<<< HEAD
 		if err = kContext.ProxyRequest(w, r); err != nil {
 			c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", "proxy_error"),
 				attribute.String("cluster", contextKey))
@@ -1420,6 +1438,39 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		}
 
 		if c.Telemetry != nil {
+=======
+		// It is checking whether the user is Authorized to access the resources.
+		isAllowed := kcache.IsAllowed(r.URL, kContext, w, r)
+		if !isAllowed {
+			c.handleError(w, ctx, span, errors.New("user not Authorized"), "User not Authorized", http.StatusForbidden)
+			return
+		}
+
+		// Checking if the key is present in the cache if it is then it serve directly to client otherwise
+		// proceed to make actual requests to K8's
+		served, err := kcache.LoadfromCache(k8scache, isAllowed, key, w)
+		if served {
+			c.telemetryHandler.RecordEvent(span, "Serving from Cache")
+			return
+		}
+
+		if err != nil {
+			c.handleError(w, ctx, span, err, "Error While Loading from cache", http.StatusInternalServerError)
+			return
+		}
+
+		c.telemetryHandler.RecordEvent(span, "Cache miss — proxying to Kubernetes API")
+
+		// Making Actual requests to k8 and then storing the resource body into the cache with TTL = 10min
+		err = kcache.RequestToK8sAndStore(k8scache, kContext, r.URL, rcw, r, key)
+		if err != nil {
+			c.handleError(w, ctx, span, err, "Error", http.StatusInternalServerError)
+		}
+
+		c.telemetryHandler.RecordEvent(span, "Resource Stored into the cache successfully")
+
+		if c.telemetry != nil {
+>>>>>>> 5b92da04 (backend: cache: added implementation in different package pkg/cache)
 			span.SetStatus(codes.Ok, "")
 			c.telemetryHandler.RecordEvent(span, "Cluster API request completed")
 		}
