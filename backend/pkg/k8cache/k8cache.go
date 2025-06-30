@@ -137,7 +137,7 @@ func UnmarshalCachedata(cacheResource string,
 
 // This function is used when serving response from cache to ensure the client
 // receives correct metadata about the response.
-func setHeader(cacheData CachedResponseData, w http.ResponseWriter) {
+func SetHeader(cacheData CachedResponseData, w http.ResponseWriter) {
 	for idx, header := range cacheData.Headers {
 		w.Header()[idx] = header
 	}
@@ -162,7 +162,7 @@ const gzipEncoding = "gzip"
 // This ensures that the cached headers accurately reflect the state of the
 // decompressed body that is being stored, and prevents client side decompression
 // issues serving from cache.
-func setHeadersTocache(responseHeaders http.Header, encoding string) http.Header {
+func SetHeadersTocache(responseHeaders http.Header, encoding string) http.Header {
 	cacheHeader := make(http.Header)
 
 	for idx, header := range responseHeaders {
@@ -225,9 +225,10 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 			return false, err
 		}
 
-		setHeader(cachedData, w)
+		SetHeader(cachedData, w)
 
 		_, writeErr := w.Write([]byte(cachedData.Body))
+
 		if writeErr == nil {
 			return true, nil
 		}
@@ -261,7 +262,7 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], kContext *kubeconfig.Con
 		return err
 	}
 
-	headersToCache := setHeadersTocache(capturedHeaders, encoding)
+	headersToCache := SetHeadersTocache(capturedHeaders, encoding)
 
 	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
 		cachedData := CachedResponseData{
