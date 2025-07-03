@@ -25,6 +25,12 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 )
@@ -62,7 +68,7 @@ func Initialize(w http.ResponseWriter) *responseCapture {
 	}
 }
 
-// The function extracts the namespace from the parameter from the given raw URL. This is used to make
+// ExtractNamespace extracts the namespace from the parameter from the given raw URL. This is used to make
 // cache key more specific to a particular namespace.
 func ExtractNamespace(rawURL string) (string, error) {
 	parsedURL, err := url.Parse(rawURL)
@@ -101,7 +107,7 @@ func GetResponseBody(bodyBytes []byte, encoding string) (string, error) {
 	return string(dcmpBody), nil
 }
 
-// This function generates a unique cache key based on the requested URL's path (kind of resource),
+// Generate Key generates a unique cache key based on the requested URL's path (kind of resource),
 // Namespace, and the kubernetes context. this ensures that the cached response are specific to the exact
 // resource, namespace ,and cluster being requested.
 func GenerateKey(url *url.URL, contextKey string, token string) (string, error) {
@@ -110,7 +116,9 @@ func GenerateKey(url *url.URL, contextKey string, token string) (string, error) 
 		return "", err
 	}
 
-	k := Key{Kind: url.Path, Namespace: namespace, Context: contextKey, Token: token}
+	split := strings.Split(url.Path, "/")
+	last := split[len(split)-1]
+	k := CacheKey{Kind: last, Namespace: namespace, Context: contextKey}
 
 	key, err := k.SHA()
 	if err != nil {
@@ -184,40 +192,60 @@ func IsAllowed(url *url.URL,
 	w http.ResponseWriter,
 	r *http.Request,
 ) bool {
-	if strings.Contains(url.Path, "selfsubjectrulesreviews") {
-		ssarResponse := Initialize(w)
-
-		err := kContext.ProxyRequest(ssarResponse, r)
-		if err != nil {
-			return false
-		}
-
-		encoding := ssarResponse.Header().Get("Content-Encoding")
-		bodyBytes := ssarResponse.Body.Bytes()
-
-		dcmp, err := GetResponseBody(bodyBytes, encoding)
-		if err != nil {
-			return false
-		}
-
-		if strings.Contains(dcmp, "Failure") {
-			return false
-		}
+	// Load the right kubeconfig file and context
+	configOverrides := &clientcmd.ConfigOverrides{
+		CurrentContext: kContext.Name,
 	}
 
-	return true
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kContext.KubeConfigPath},
+		configOverrides,
+	).ClientConfig()
+	if err != nil {
+		return false
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return false
+	}
+
+	apiPath := mux.Vars(r)["api"] // should be e.g. "api/v1/secrets"
+	parts := strings.Split(apiPath, "/")
+
+	last := parts[len(parts)-1]
+
+	review := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Resource: last,
+				Verb:     "get",
+			},
+		},
+	}
+
+	result, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(
+		context.TODO(),
+		review,
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		return false
+	}
+
+	return result.Status.Allowed
 }
 
 // If the user has the permission to view the resources then it will check if the generated key is found
 // in the cache if the key is present in the cache then it will return directly to the client in []byte form
 // and returns true ,Otherwise it will return false.
 func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w http.ResponseWriter) (bool, error) {
-	if !isAllowed {
-		return false, errors.New("user not authenticated")
-	}
-
 	k8Resource, err := k8scache.Get(context.Background(), key)
 	if err == nil && strings.TrimSpace(k8Resource) != "" {
+		if !isAllowed {
+			return false, errors.New("user not aurhorized")
+		}
+
 		var cachedData CachedResponseData
 
 		cachedData, err := UnmarshalCachedata(k8Resource, cachedData)
@@ -246,13 +274,6 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], kContext *kubeconfig.Con
 	r *http.Request,
 	key string,
 ) error {
-	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
-		err := kContext.ProxyRequest(rcw, r)
-		if err != nil {
-			return err
-		}
-	}
-
 	capturedHeaders := rcw.Header()
 	encoding := capturedHeaders.Get("Content-Encoding")
 	bodyBytes := rcw.Body.Bytes()
@@ -276,8 +297,10 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], kContext *kubeconfig.Con
 			return err
 		}
 
-		if err = k8scache.SetWithTTL(context.Background(), key, string(jsonBytes), 10*time.Minute); err != nil {
-			return err
+		if !strings.Contains(string(jsonBytes), "Failure") {
+			if err = k8scache.SetWithTTL(context.Background(), key, string(jsonBytes), 10*time.Minute); err != nil {
+				return err
+			}
 		}
 	}
 

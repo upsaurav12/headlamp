@@ -45,7 +45,6 @@ import (
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	cfg "github.com/kubernetes-sigs/headlamp/backend/pkg/config"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/helm"
-	k8cache "github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/logger"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/plugins"
@@ -1376,65 +1375,6 @@ func (c *HeadlampConfig) handleError(w http.ResponseWriter, ctx context.Context,
 	c.telemetryHandler.RecordError(span, err, msg)
 	c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", msg))
 	http.Error(w, err.Error(), status)
-}
-
-func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
-				attribute.String("cluster", mux.Vars(r)["clusterName"]),
-			)
-			defer span.End()
-
-			contextKey, err := c.getContextKeyForRequest(r)
-			if err != nil {
-				c.handleError(w, ctx, span, err, "failed to get context key", http.StatusBadRequest)
-				return
-			}
-
-			kContext, err := c.kubeConfigStore.GetContext(contextKey)
-			if err != nil {
-				c.handleError(w, ctx, span, err, "failed to get context", http.StatusNotFound)
-				return
-			}
-
-			if kContext.Error != "" {
-				c.handleError(w, ctx, span, errors.New(kContext.Error), "context has error", http.StatusBadRequest)
-				return
-			}
-
-			rcw := k8cache.Initialize(w)
-
-			key, err := k8cache.GenerateKey(r.URL, contextKey, "")
-			if err != nil {
-				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to generate key ", http.StatusBadRequest)
-				return
-			}
-
-			served, err := k8cache.LoadfromCache(k8scache, key, w)
-			if err != nil {
-				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to load from cache", http.StatusBadRequest)
-				return
-			}
-
-			if served {
-				c.telemetryHandler.RecordEvent(span, "Served from cache")
-				return
-			}
-
-			next.ServeHTTP(rcw, r)
-
-			err = k8cache.RequestToK8sAndStore(k8scache, kContext, r.URL, rcw, r, key)
-			if err != nil {
-				c.handleError(w, ctx, span, errors.New(kContext.Error), "error while storing into cache", http.StatusBadRequest)
-				return
-			}
-
-			c.telemetryHandler.RecordEvent(span, "stored successfully")
-		})
-	}
 }
 
 // handleClusterAPI handles cluster API requests. It is responsible for
