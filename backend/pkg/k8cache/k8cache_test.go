@@ -406,12 +406,12 @@ func TestIsAllowed(t *testing.T) {
 	}{
 		{
 			name:   "user is allowed",
-			urlObj: &url.URL{Path: "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews"},
+			urlObj: &url.URL{Path: "/api/v1/pods"},
 			kContext: kubeconfig.Context{
 				Name:    "hello-world",
 				Cluster: &api.Cluster{},
 			},
-			isAllowed: true,
+			isAllowed: false,
 		},
 	}
 
