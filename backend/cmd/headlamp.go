@@ -45,7 +45,7 @@ import (
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	cfg "github.com/kubernetes-sigs/headlamp/backend/pkg/config"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/helm"
-	kcache "github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
+	k8cache "github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/logger"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/plugins"
@@ -1378,11 +1378,71 @@ func (c *HeadlampConfig) handleError(w http.ResponseWriter, ctx context.Context,
 	http.Error(w, err.Error(), status)
 }
 
+func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
+				attribute.String("cluster", mux.Vars(r)["clusterName"]),
+			)
+			defer span.End()
+
+			contextKey, err := c.getContextKeyForRequest(r)
+			if err != nil {
+				c.handleError(w, ctx, span, err, "failed to get context key", http.StatusBadRequest)
+				return
+			}
+
+			kContext, err := c.kubeConfigStore.GetContext(contextKey)
+			if err != nil {
+				c.handleError(w, ctx, span, err, "failed to get context", http.StatusNotFound)
+				return
+			}
+
+			if kContext.Error != "" {
+				c.handleError(w, ctx, span, errors.New(kContext.Error), "context has error", http.StatusBadRequest)
+				return
+			}
+
+			rcw := k8cache.Initialize(w)
+
+			key, err := k8cache.GenerateKey(r.URL, contextKey, "")
+			if err != nil {
+				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to generate key ", http.StatusBadRequest)
+				return
+			}
+
+			served, err := k8cache.LoadfromCache(k8scache, key, w)
+			if err != nil {
+				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to load from cache", http.StatusBadRequest)
+				return
+			}
+
+			if served {
+				c.telemetryHandler.RecordEvent(span, "Served from cache")
+				return
+			}
+
+			next.ServeHTTP(rcw, r)
+
+			err = k8cache.RequestToK8sAndStore(k8scache, kContext, r.URL, rcw, r, key)
+			if err != nil {
+				c.handleError(w, ctx, span, errors.New(kContext.Error), "error while storing into cache", http.StatusBadRequest)
+				return
+			}
+
+			c.telemetryHandler.RecordEvent(span, "stored successfully")
+		})
+	}
+}
+
 // handleClusterAPI handles cluster API requests. It is responsible for
 // all the requests made to /clusters/{clusterName}/{api:.*} endpoint.
 // It parses the request and creates a proxy request to the cluster.
 // That proxy is saved in the cache with the context key.
 func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
+	router.Use(CacheMiddleWare(c))
 	router.PathPrefix("/clusters/{clusterName}/{api:.*}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ctx := r.Context()
@@ -1436,50 +1496,16 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
 		r.URL.Path = mux.Vars(r)["api"]
 		r.URL.Scheme = clusterURL.Scheme
 
-		_, token := parseClusterAndToken(r)
-		// Initializes the responseCapture which is responsible for storing the response body
-		rcw := kcache.Initialize(w)
-
-		// Generating Key
-		key, err := kcache.GenerateKey(r.URL, contextKey, token)
-		if err != nil {
-			c.handleError(w, context.Background(), span, err, "Error", http.StatusInternalServerError)
-		}
-
 		c.telemetryHandler.RecordEvent(span, "key generated successfully!!")
 		// Process WebSocket protocol headers if present
 		processWebSocketProtocolHeader(r)
 		plugins.HandlePluginReload(c.cache, w)
 
-		// It is checking whether the user is Authorized to access the resources.
-		isAllowed := kcache.IsAllowed(r.URL, kContext, w, r)
-		if !isAllowed {
-			c.handleError(w, ctx, span, errors.New("user not Authorized"), "User not Authorized", http.StatusForbidden)
-			return
+		if err = kContext.ProxyRequest(w, r); err != nil {
+			c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error.type", "proxy_error"),
+				attribute.String("cluster", contextKey))
+			c.handleError(w, ctx, span, err, "failed to proxy request", http.StatusInternalServerError)
 		}
-
-		// Checking if the key is present in the cache if it is then it serve directly to client otherwise
-		// proceed to make actual requests to K8's
-		served, err := kcache.LoadfromCache(k8scache, isAllowed, key, w)
-		if served {
-			c.telemetryHandler.RecordEvent(span, "Serving from Cache")
-			return
-		}
-
-		if err != nil {
-			c.handleError(w, ctx, span, err, "Error While Loading from cache", http.StatusInternalServerError)
-			return
-		}
-
-		c.telemetryHandler.RecordEvent(span, "Cache miss — proxying to Kubernetes API")
-
-		// Making Actual requests to k8 and then storing the resource body into the cache with TTL = 10min
-		err = kcache.RequestToK8sAndStore(k8scache, kContext, r.URL, rcw, r, key)
-		if err != nil {
-			c.handleError(w, ctx, span, err, "Error", http.StatusInternalServerError)
-		}
-
-		c.telemetryHandler.RecordEvent(span, "Resource Stored into the cache successfully")
 
 		if c.telemetry != nil {
 			span.SetStatus(codes.Ok, "")
