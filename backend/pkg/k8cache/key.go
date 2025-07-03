@@ -22,10 +22,10 @@ import (
 
 // Key struct used to store different values to make Key unique
 // for different requests.
-type Key struct {
-	Kind      string
-	Namespace string
-	Context   string
+type CacheKey struct {
+	Kind      string // Kind is the string object which is the user is requesting
+	Namespace string // Namespace is string object which tells what Namespace is the user trying to access
+	Context   string // Context is the unique Id which helps to differentiate multi-context
 	Token     string
 }
 
@@ -42,6 +42,6 @@ func HashObject(any interface{}) (string, error) {
 }
 
 // Returns Key when called.
-func (k *Key) SHA() (string, error) {
+func (k *CacheKey) SHA() (string, error) {
 	return HashObject(k)
 }
