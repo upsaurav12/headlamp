@@ -184,33 +184,56 @@ func SetHeadersTocache(responseHeaders http.Header, encoding string) http.Header
 	return cacheHeader
 }
 
+// This is NOT the recommended way, but shows how a separate function *could* work.
+// The method on the struct (GetClientset above) is superior.
+func getClientMD(k *kubeconfig.Context) (*kubernetes.Clientset, error) {
+	k.Once.Do(func() {
+		configOverrides := &clientcmd.ConfigOverrides{
+			CurrentContext: k.Name,
+		}
+
+		config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: k.KubeConfigPath},
+			configOverrides,
+		).ClientConfig()
+		if err != nil {
+			k.ClientSetError = fmt.Errorf("error loading kubeconfig for context %s: %w", k.Name, err)
+			return
+		}
+
+		clientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			k.ClientSetError = fmt.Errorf("error creating Kubernetes Clientset for context %s: %w", k.Name, err)
+			return
+		}
+
+		fmt.Println("Clientset created successfully ")
+
+		k.ClientSet = clientset
+		k.ClientSetError = nil
+	})
+
+	if k.ClientSetError != nil {
+		return k.ClientSet, k.ClientSetError
+	}
+
+	return k.ClientSet, nil
+}
+
 // This function checks the user's permission to access the resource.
 // If the user is authorized and has permission to view the resources, it returns true.
 // Otherwise, it returns false if authorization fails.
 func IsAllowed(url *url.URL,
-	kContext *kubeconfig.Context,
+	k *kubeconfig.Context,
 	w http.ResponseWriter,
 	r *http.Request,
-) bool {
-	// Load the right kubeconfig file and context
-	configOverrides := &clientcmd.ConfigOverrides{
-		CurrentContext: kContext.Name,
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kContext.KubeConfigPath},
-		configOverrides,
-	).ClientConfig()
+) (bool, error) {
+	clientset, err := getClientMD(k)
 	if err != nil {
-		return false
+		return false, err
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return false
-	}
-
-	apiPath := mux.Vars(r)["api"] // should be e.g. "api/v1/secrets"
+	apiPath := mux.Vars(r)["api"]
 	parts := strings.Split(apiPath, "/")
 
 	last := parts[len(parts)-1]
@@ -230,10 +253,12 @@ func IsAllowed(url *url.URL,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
-		return false
+		return false, err
 	}
 
-	return result.Status.Allowed
+	fmt.Println("Error while AUthorization: ", result.Status.Allowed)
+
+	return result.Status.Allowed, nil
 }
 
 // If the user has the permission to view the resources then it will check if the generated key is found
@@ -268,7 +293,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 // If the key was not found inside the cache then this will make actual call to k8's
 // and this will capture the response body and convert the captured response to string.
 // After converting it will store the response with the key and TTL of 10*min.
-func RequestToK8sAndStore(k8scache cache.Cache[string], kContext *kubeconfig.Context,
+func RequestToK8sAndStore(k8scache cache.Cache[string], k *kubeconfig.Context,
 	url *url.URL,
 	rcw *responseCapture,
 	r *http.Request,
