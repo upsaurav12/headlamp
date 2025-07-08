@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +50,10 @@ type Context struct {
 	KubeConfigPath string `json:"kubeConfigPath"`
 	// ClusterID is the unique identifier for the cluster, consisting of the filepath and context name.
 	ClusterID string `json:"clusterID"`
+
+	Once           sync.Once
+	ClientSetError error
+	ClientSet      *kubernetes.Clientset
 }
 
 type OidcConfig struct {
@@ -257,6 +262,7 @@ func (c *Context) OidcConfig() (*OidcConfig, error) {
 
 // ProxyRequest proxies the given request to the cluster.
 func (c *Context) ProxyRequest(writer http.ResponseWriter, request *http.Request) error {
+	fmt.Println("Making Actual Request using Proxy!!!")
 	if c.proxy == nil {
 		err := c.SetupProxy()
 		if err != nil {

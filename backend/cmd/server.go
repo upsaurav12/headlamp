@@ -128,7 +128,11 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			isAllowed := k8cache.IsAllowed(r.URL, kContext, w, r)
+			isAllowed, err := k8cache.IsAllowed(r.URL, kContext, w, r)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
 
 			served, err := k8cache.LoadfromCache(k8scache, isAllowed, key, w)
 			if err != nil {
