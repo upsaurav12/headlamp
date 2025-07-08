@@ -257,7 +257,6 @@ func (c *Context) OidcConfig() (*OidcConfig, error) {
 
 // ProxyRequest proxies the given request to the cluster.
 func (c *Context) ProxyRequest(writer http.ResponseWriter, request *http.Request) error {
-	fmt.Println("Making Actual Request using Proxy!!!")
 	if c.proxy == nil {
 		err := c.SetupProxy()
 		if err != nil {
