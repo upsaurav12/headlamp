@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -33,6 +34,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
+)
+
+var (
+	once      sync.Once
+	clientset *kubernetes.Clientset
+	err       error
 )
 
 // var k8scache = cache.New[string]()
@@ -81,7 +88,7 @@ func ExtractNamespace(rawURL string) (string, error) {
 	return namespace, nil
 }
 
-// It is used to convert the captured response from gzip to string which can be easily convert
+// GetResponseBody is used to convert the captured response from gzip to string which can be easily convert
 // []byte form for sending to client.
 func GetResponseBody(bodyBytes []byte, encoding string) (string, error) {
 	var dcmpBody []byte
@@ -107,18 +114,16 @@ func GetResponseBody(bodyBytes []byte, encoding string) (string, error) {
 	return string(dcmpBody), nil
 }
 
-// Generate Key generates a unique cache key based on the requested URL's path (kind of resource),
-// Namespace, and the kubernetes context. this ensures that the cached response are specific to the exact
-// resource, namespace ,and cluster being requested.
-func GenerateKey(url *url.URL, contextKey string, token string) (string, error) {
+// GenerateKey function helps to generate a unique key based on the request from the client
+// The function accepts url( which includes all the information of request ) and contextID which
+// helps to differentiate in multiple contexts.
+func GenerateKey(url *url.URL, contextID string) (string, error) {
 	namespace, err := ExtractNamespace(url.String())
 	if err != nil {
 		return "", err
 	}
 
-	split := strings.Split(url.Path, "/")
-	last := split[len(split)-1]
-	k := CacheKey{Kind: last, Namespace: namespace, Context: contextKey}
+	k := CacheKey{Kind: url.Path, Namespace: namespace, Context: contextID}
 
 	key, err := k.SHA()
 	if err != nil {
@@ -156,7 +161,7 @@ func SetHeader(cacheData CachedResponseData, w http.ResponseWriter) {
 // MarshallToStore serialize a cacheResponseData struct into JSON []byte.
 // This function is used before storing the K8's response data into cache.
 // ensuring a consistent and structured format for all cached entries.
-func MarshallToStore(cacheData CachedResponseData) ([]byte, error) {
+func MarshalToStore(cacheData CachedResponseData) ([]byte, error) {
 	jsonByte, err := json.Marshal(cacheData)
 	if err != nil {
 		return nil, err
@@ -170,7 +175,7 @@ const gzipEncoding = "gzip"
 // This ensures that the cached headers accurately reflect the state of the
 // decompressed body that is being stored, and prevents client side decompression
 // issues serving from cache.
-func SetHeadersTocache(responseHeaders http.Header, encoding string) http.Header {
+func SetHeadersToCache(responseHeaders http.Header, encoding string) http.Header {
 	cacheHeader := make(http.Header)
 
 	for idx, header := range responseHeaders {
@@ -186,8 +191,11 @@ func SetHeadersTocache(responseHeaders http.Header, encoding string) http.Header
 
 // This is NOT the recommended way, but shows how a separate function *could* work.
 // The method on the struct (GetClientset above) is superior.
-func getClientMD(k *kubeconfig.Context) (*kubernetes.Clientset, error) {
-	k.Once.Do(func() {
+func getClientMD(k *kubeconfig.Context,
+	clientSet *kubernetes.Clientset,
+	clienterr error, once *sync.Once,
+) (*kubernetes.Clientset, error) {
+	once.Do(func() {
 		configOverrides := &clientcmd.ConfigOverrides{
 			CurrentContext: k.Name,
 		}
@@ -197,27 +205,25 @@ func getClientMD(k *kubeconfig.Context) (*kubernetes.Clientset, error) {
 			configOverrides,
 		).ClientConfig()
 		if err != nil {
-			k.ClientSetError = fmt.Errorf("error loading kubeconfig for context %s: %w", k.Name, err)
+			clienterr = fmt.Errorf("error loading kubeconfig for context %s: %w", k.Name, err)
 			return
 		}
 
 		clientset, err := kubernetes.NewForConfig(config)
 		if err != nil {
-			k.ClientSetError = fmt.Errorf("error creating Kubernetes Clientset for context %s: %w", k.Name, err)
+			clienterr = fmt.Errorf("error creating Kubernetes Clientset for context %s: %w", k.Name, err)
 			return
 		}
 
-		fmt.Println("Clientset created successfully ")
-
-		k.ClientSet = clientset
-		k.ClientSetError = nil
+		clientSet = clientset
+		clienterr = nil
 	})
 
-	if k.ClientSetError != nil {
-		return k.ClientSet, k.ClientSetError
+	if clientSet != nil {
+		return clientSet, clienterr
 	}
 
-	return k.ClientSet, nil
+	return clientSet, nil
 }
 
 // This function checks the user's permission to access the resource.
@@ -228,7 +234,7 @@ func IsAllowed(url *url.URL,
 	w http.ResponseWriter,
 	r *http.Request,
 ) (bool, error) {
-	clientset, err := getClientMD(k)
+	clientset, err = getClientMD(k, clientset, err, &once)
 	if err != nil {
 		return false, err
 	}
@@ -256,8 +262,6 @@ func IsAllowed(url *url.URL,
 		return false, err
 	}
 
-	fmt.Println("Error while AUthorization: ", result.Status.Allowed)
-
 	return result.Status.Allowed, nil
 }
 
@@ -268,7 +272,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 	k8Resource, err := k8scache.Get(context.Background(), key)
 	if err == nil && strings.TrimSpace(k8Resource) != "" {
 		if !isAllowed {
-			return false, errors.New("user not aurhorized")
+			return false, errors.New("user not authorized")
 		}
 
 		var cachedData CachedResponseData
@@ -308,7 +312,7 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], k *kubeconfig.Context,
 		return err
 	}
 
-	headersToCache := SetHeadersTocache(capturedHeaders, encoding)
+	headersToCache := SetHeadersToCache(capturedHeaders, encoding)
 
 	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
 		cachedData := CachedResponseData{
@@ -317,7 +321,7 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], k *kubeconfig.Context,
 			Body:       dcmpBody,
 		}
 
-		jsonBytes, err := MarshallToStore(cachedData)
+		jsonBytes, err := MarshalToStore(cachedData)
 		if err != nil {
 			return err
 		}

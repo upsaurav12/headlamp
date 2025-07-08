@@ -337,7 +337,7 @@ func TestMarshallToStore(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := k8cache.MarshallToStore(tc.cacheData)
+			data, err := k8cache.MarshalToStore(tc.cacheData)
 			assert.Equal(t, tc.expectedData, string(data))
 			assert.NoError(t, err)
 		})
@@ -371,7 +371,7 @@ func TestSetHeaderToCache(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			header := k8cache.SetHeadersTocache(tc.responseHeader, tc.encoding)
+			header := k8cache.SetHeadersToCache(tc.responseHeader, tc.encoding)
 			assert.Equal(t, tc.expectedHeader, header)
 		})
 	}
@@ -382,49 +382,18 @@ func TestSetHeaderToCache(t *testing.T) {
 func TestGenerateKey(t *testing.T) {
 	t.Run("url was valid ", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := k8cache.GenerateKey(u, "mycluster", "")
+		key, err := k8cache.GenerateKey(u, "mycluster")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})
 
 	t.Run("empty cluster", func(t *testing.T) {
 		u, _ := url.Parse("https://example.com/api/resource?namespace=myns")
-		key, err := k8cache.GenerateKey(u, "", "")
+		key, err := k8cache.GenerateKey(u, "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, key)
 	})
 }
-
-// TestIsAllowed test whether the function is returning correct boolean value
-// while making SSAR request.
-// func TestIsAllowed(t *testing.T) {
-// 	tests := []struct {
-// 		name      string
-// 		urlObj    *url.URL
-// 		kContext  *kubeconfig.Context
-// 		isAllowed bool
-// 	}{
-// 		{
-// 			name:   "user is allowed",
-// 			urlObj: &url.URL{Path: "/api/v1/pods"},
-// 			kContext: &kubeconfig.Context{
-// 				Name:    "kind-saurav-limited",
-// 				Cluster: &api.Cluster{},
-// 			},
-// 			isAllowed: false,
-// 		},
-// 	}
-
-// 	for _, tc := range tests {
-// 		t.Run(tc.name, func(t *testing.T) {
-// 			rw := httptest.NewRecorder()
-// 			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
-
-// 			isAllowed, _ := k8cache.IsAllowed(tc.urlObj, tc.kContext, rw, r)
-// 			assert.Equal(t, tc.isAllowed, isAllowed)
-// 		})
-// 	}
-// }
 
 // TestLoadFromCache tests whether the cache data is being served to the
 // client correctly.
