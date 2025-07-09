@@ -1356,13 +1356,9 @@ func (c *HeadlampConfig) handleError(w http.ResponseWriter, ctx context.Context,
 // It parses the request and creates a proxy request to the cluster.
 // That proxy is saved in the cache with the context key.
 func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
-<<<<<<< HEAD
-	router.PathPrefix("/clusters/{clusterName}/{api:.*}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-=======
 	sub := router.PathPrefix("/clusters/{clusterName}/{api:.*}").Subrouter()
 	sub.Use(CacheMiddleWare(c))
 	sub.Path("").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
->>>>>>> 1d998ffc (backend: cache: move the caching logic to middleware)
 		start := time.Now()
 		ctx := r.Context()
 
