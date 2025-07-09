@@ -133,8 +133,7 @@ func TestStatelessClusterApiRequest(t *testing.T) {
 			kubeConfigStore := kubeconfig.NewContextStore()
 			c := HeadlampConfig{
 				HeadlampCFG: &headlampconfig.HeadlampCFG{
-					UseInCluster:          false,
-					KubeConfigPath:        "",
+					UseInCluster: false, KubeConfigPath: "",
 					EnableDynamicClusters: true,
 					KubeConfigStore:       kubeConfigStore,
 				},
@@ -147,7 +146,6 @@ func TestStatelessClusterApiRequest(t *testing.T) {
 				"KUBECONFIG":         kubeConfig,
 				"X-HEADLAMP-USER-ID": tc.userID,
 			}
-
 			requestPath := fmt.Sprintf("/clusters/%s/version/", tc.name)
 			req, err := http.NewRequest("GET", requestPath, nil) //nolint:noctx
 			require.NoError(t, err)
