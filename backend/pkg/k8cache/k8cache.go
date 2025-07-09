@@ -23,17 +23,23 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 )
 
-// var k8scache = cache.New[string]()
+var (
+	clientSet    *kubernetes.Clientset
+	clientSetErr error
+	once         sync.Once
+)
 
 type responseCapture struct {
 	http.ResponseWriter
@@ -180,6 +186,29 @@ func SetHeadersToCache(responseHeaders http.Header, encoding string) http.Header
 	return cacheHeader
 }
 
+// getClientMD is used to create clientset where it will be created once
+// and later it will be reuse. This helps to reduce time.
+func getClientMD(k *kubeconfig.Context,
+	token string,
+) (*kubernetes.Clientset, error) {
+	once.Do(func() {
+		clientset, err := k.ClientSetWithToken(token)
+		if err != nil {
+			clientSetErr = fmt.Errorf("error while creating clientset %w", err)
+			return
+		}
+
+		clientSet = clientset
+		clientSetErr = nil
+	})
+
+	if clientSetErr != nil {
+		return clientSet, clientSetErr
+	}
+
+	return clientSet, nil
+}
+
 // This function checks the user's permission to access the resource.
 // If the user is authorized and has permission to view the resources, it returns true.
 // Otherwise, it returns false if authorization fails.
@@ -190,7 +219,7 @@ func IsAllowed(url *url.URL,
 ) (bool, error) {
 	token := r.Header.Get("Authorization")
 
-	clientset, err := k.ClientSetWithToken(token)
+	clientset, err := getClientMD(k, token)
 	if err != nil {
 		return false, err
 	}
