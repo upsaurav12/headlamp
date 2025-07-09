@@ -23,23 +23,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
-)
-
-var (
-	once      sync.Once
-	clientset *kubernetes.Clientset
-	err       error
 )
 
 // var k8scache = cache.New[string]()
@@ -189,43 +180,6 @@ func SetHeadersToCache(responseHeaders http.Header, encoding string) http.Header
 	return cacheHeader
 }
 
-// This is NOT the recommended way, but shows how a separate function *could* work.
-// The method on the struct (GetClientset above) is superior.
-func getClientMD(k *kubeconfig.Context,
-	clientSet *kubernetes.Clientset,
-	clienterr error, once *sync.Once,
-) (*kubernetes.Clientset, error) {
-	once.Do(func() {
-		configOverrides := &clientcmd.ConfigOverrides{
-			CurrentContext: k.Name,
-		}
-
-		config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-			&clientcmd.ClientConfigLoadingRules{ExplicitPath: k.KubeConfigPath},
-			configOverrides,
-		).ClientConfig()
-		if err != nil {
-			clienterr = fmt.Errorf("error loading kubeconfig for context %s: %w", k.Name, err)
-			return
-		}
-
-		clientset, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			clienterr = fmt.Errorf("error creating Kubernetes Clientset for context %s: %w", k.Name, err)
-			return
-		}
-
-		clientSet = clientset
-		clienterr = nil
-	})
-
-	if clientSet != nil {
-		return clientSet, clienterr
-	}
-
-	return clientSet, nil
-}
-
 // This function checks the user's permission to access the resource.
 // If the user is authorized and has permission to view the resources, it returns true.
 // Otherwise, it returns false if authorization fails.
@@ -234,7 +188,9 @@ func IsAllowed(url *url.URL,
 	w http.ResponseWriter,
 	r *http.Request,
 ) (bool, error) {
-	clientset, err = getClientMD(k, clientset, err, &once)
+	token := r.Header.Get("Authorization")
+
+	clientset, err := k.ClientSetWithToken(token)
 	if err != nil {
 		return false, err
 	}
