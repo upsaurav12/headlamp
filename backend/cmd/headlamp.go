@@ -401,8 +401,8 @@ func createHeadlampHandler(config *HeadlampConfig) http.Handler {
 	logger.Log(logger.LevelInfo, nil, nil, "Kubeconfig path: "+kubeConfigPath)
 	logger.Log(logger.LevelInfo, nil, nil, "Static plugin dir: "+config.StaticPluginDir)
 	logger.Log(logger.LevelInfo, nil, nil, "Plugins dir: "+config.PluginDir)
-	logger.Log(logger.LevelInfo, nil, nil, "Dynamic clusters supPort: "+fmt.Sprint(config.EnableDynamicClusters))
-	logger.Log(logger.LevelInfo, nil, nil, "Helm supPort: "+fmt.Sprint(config.EnableHelm))
+	logger.Log(logger.LevelInfo, nil, nil, "Dynamic clusters support: "+fmt.Sprint(config.EnableDynamicClusters))
+	logger.Log(logger.LevelInfo, nil, nil, "Helm support: "+fmt.Sprint(config.EnableHelm))
 	logger.Log(logger.LevelInfo, nil, nil, "Proxy URLs: "+fmt.Sprint(config.ProxyURLs))
 
 	plugins.PopulatePluginsCache(config.StaticPluginDir, config.PluginDir, config.cache)
