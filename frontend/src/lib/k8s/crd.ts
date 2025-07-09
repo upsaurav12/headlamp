@@ -127,6 +127,8 @@ class CustomResourceDefinition extends KubeObject<KubeCRD> {
       isNamespaced: this.spec.scope === 'Namespaced',
       singularName: this.spec.names.singular,
       pluralName: this.spec.names.plural,
+      customResourceDefinition: this,
+      kind: this.spec.names.kind,
     });
   }
 
@@ -140,9 +142,11 @@ export interface CRClassArgs {
     group: string;
     version: string;
   }[];
+  kind: string;
   pluralName: string;
   singularName: string;
   isNamespaced: boolean;
+  customResourceDefinition: CustomResourceDefinition;
 }
 
 /** @deprecated Use the version of the function that receives an object as its argument. */
@@ -179,13 +183,14 @@ export function makeCustomResourceClass(
 
   const apiFunc = !!objArgs.isNamespaced ? apiFactoryWithNamespace : apiFactory;
   return class CRClass extends KubeObject<any> {
-    static kind = objArgs.singleName;
+    static kind = crClassArgs.kind;
     static apiName = crClassArgs.pluralName;
     static apiVersion = apiInfoArgs.map(([group, version]) =>
       group ? `${group}/${version}` : version
     );
     static isNamespaced = objArgs.isNamespaced;
     static apiEndpoint = apiFunc(...apiInfoArgs);
+    static customResourceDefinition = crClassArgs.customResourceDefinition;
   };
 }
 

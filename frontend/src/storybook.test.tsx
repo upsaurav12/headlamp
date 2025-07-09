@@ -69,6 +69,8 @@ vi.mock('@iconify/react', () => ({
 }));
 
 vi.mock('@monaco-editor/react', () => ({
+  Editor: () => <div className="mock-monaco-editor" />,
+  useMonaco: () => null,
   loader: { config: () => null },
   default: () => <div className="mock-monaco-editor" />,
 }));
@@ -163,6 +165,13 @@ describe('Storybook Tests', () => {
           worker.events.on('request:start', onStart);
           worker.events.on('request:end', onEnd);
 
+          const unhandledRequests: Array<string> = [];
+
+          function onUnhandledRequest(e: { request: Request }) {
+            unhandledRequests.push(e.request.url);
+          }
+          worker.events.on('request:unhandled', onUnhandledRequest);
+
           act(() => {
             previewAnnotations.queryClient.clear();
           });
@@ -187,15 +196,30 @@ describe('Storybook Tests', () => {
             }
           });
 
+          expect(
+            unhandledRequests,
+            'MSW: intercepted a request without a matching request handler. Please create a request handler for it'
+          ).toEqual([]);
+
           await waitFor(() => {
             if (previewAnnotations.queryClient.isFetching()) {
-              throw new Error('The react-query is still fetching');
+              const pendingQueries = previewAnnotations.queryClient
+                .getQueryCache()
+                .findAll({ fetchStatus: 'fetching' });
+
+              throw new Error(
+                'The react-query is still fetching following queries:\n' +
+                  pendingQueries
+                    .map((it, i) => String(i + 1) + ': ' + JSON.stringify(it.queryKey))
+                    .join('\n')
+              );
             }
           });
 
           // Cleanup listeners
           worker.events.removeListener('request:start', onStart);
           worker.events.removeListener('request:end', onEnd);
+          worker.events.removeListener('request:unhandled', onUnhandledRequest);
 
           // Put snapshot next to the story
           const snapshotPath = path.join(

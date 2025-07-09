@@ -35,6 +35,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
@@ -89,6 +90,8 @@ const ContextCacheTTL = 5 * time.Minute // minutes
 const ContextUpdateCacheTTL = 20 * time.Second // seconds
 
 const JWTExpirationTTL = 10 * time.Second // seconds
+
+const kubeConfigSource = "kubeconfig" // source for kubeconfig contexts
 
 const (
 	// TokenCacheFileMode is the file mode for token cache files.
@@ -259,43 +262,8 @@ func serveWithNoCacheHeader(fs http.Handler) http.HandlerFunc {
 	}
 }
 
-// defaultKubeConfigPersistenceDir returns the default directory to store kubeconfig
-// files of clusters that are loaded in Headlamp.
-func defaultKubeConfigPersistenceDir() (string, error) {
-	userConfigDir, err := os.UserConfigDir()
-	if err == nil {
-		kubeConfigDir := filepath.Join(userConfigDir, "Headlamp", "kubeconfigs")
-		if isWindows {
-			// golang is wrong for config folder on windows.
-			// This matches env-paths and headlamp-plugin.
-			kubeConfigDir = filepath.Join(userConfigDir, "Headlamp", "Config", "kubeconfigs")
-		}
-
-		// Create the directory if it doesn't exist.
-		fileMode := 0o755
-
-		err = os.MkdirAll(kubeConfigDir, fs.FileMode(fileMode))
-		if err == nil {
-			return kubeConfigDir, nil
-		}
-	}
-
-	// if any error occurred, fallback to the current directory.
-	ex, err := os.Executable()
-	if err == nil {
-		return filepath.Dir(ex), nil
-	}
-
-	return "", fmt.Errorf("failed to get default kubeconfig persistence directory: %v", err)
-}
-
-func defaultKubeConfigPersistenceFile() (string, error) {
-	kubeConfigDir, err := defaultKubeConfigPersistenceDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(kubeConfigDir, "config"), nil
+func defaultHeadlampKubeConfigFile() (string, error) {
+	return cfg.DefaultHeadlampKubeConfigFile()
 }
 
 // addPluginRoutes adds plugin routes to a router.
@@ -502,7 +470,7 @@ func createHeadlampHandler(config *HeadlampConfig) http.Handler {
 	}
 
 	// load dynamic clusters
-	kubeConfigPersistenceFile, err := defaultKubeConfigPersistenceFile()
+	kubeConfigPersistenceFile, err := defaultHeadlampKubeConfigFile()
 	if err != nil {
 		logger.Log(logger.LevelError, nil, err, "getting default kubeconfig persistence file")
 	}
@@ -1203,7 +1171,18 @@ func StartHeadlampServer(config *HeadlampConfig) {
 	// Start server
 	if err := http.ListenAndServe(addr, handler); err != nil { //nolint:gosec
 		logger.Log(logger.LevelError, nil, err, "Failed to start server")
-		return
+
+		HandleServerStartError(&err)
+	}
+}
+
+// Handle common server startup errors.
+func HandleServerStartError(err *error) {
+	// Check if the reason server failed because the address is already in use
+	// this might be because backend process is already running
+	if errors.Is(*err, syscall.EADDRINUSE) {
+		// Exit with 98 (address in use) exit code
+		os.Exit(int(syscall.EADDRINUSE))
 	}
 }
 
@@ -1871,7 +1850,7 @@ func (c *HeadlampConfig) writeKubeConfig(kubeConfigBase64 string) error {
 		return fmt.Errorf("loading kubeconfig: %w", err)
 	}
 
-	kubeConfigPersistenceDir, err := defaultKubeConfigPersistenceDir()
+	kubeConfigPersistenceDir, err := cfg.MakeHeadlampKubeConfigsDir()
 	if err != nil {
 		return fmt.Errorf("getting default kubeconfig persistence dir: %w", err)
 	}
@@ -1927,30 +1906,52 @@ func (c *HeadlampConfig) deleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kubeConfigPersistenceFile, err := defaultKubeConfigPersistenceFile()
-	if err != nil {
-		c.handleError(w, ctx, span, err, "failed to get kubeconfig persistence file", http.StatusInternalServerError)
+	c.handleDeleteCluster(w, r, ctx, span, name)
 
-		return
-	}
+	c.getConfig(w, r)
+}
 
-	logger.Log(logger.LevelInfo, map[string]string{
-		"cluster":                   name,
-		"kubeConfigPersistenceFile": kubeConfigPersistenceFile,
-	},
-		nil, "Removing cluster from kubeconfig")
-
-	err = kubeconfig.RemoveContextFromFile(name, kubeConfigPersistenceFile)
-	if err != nil {
-		c.handleError(w, ctx, span, err, "failed to remove cluster from kubeconfig", http.StatusInternalServerError)
-
+// handleDeleteCluster handles the deletion of a cluster.
+func (c *HeadlampConfig) handleDeleteCluster(
+	w http.ResponseWriter,
+	r *http.Request,
+	ctx context.Context,
+	span trace.Span,
+	name string,
+) {
+	removeKubeConfig := r.URL.Query().Get("removeKubeConfig") == "true"
+	if removeKubeConfig {
+		c.handleRemoveKubeConfig(w, r, ctx, span, name)
 		return
 	}
 
 	logger.Log(logger.LevelInfo, map[string]string{"cluster": name, "proxy": name},
 		nil, "removed cluster successfully")
+}
 
-	c.getConfig(w, r)
+// handleRemoveKubeConfig removes the cluster from the kubeconfig file.
+func (c *HeadlampConfig) handleRemoveKubeConfig(
+	w http.ResponseWriter,
+	r *http.Request,
+	ctx context.Context,
+	span trace.Span,
+	name string,
+) {
+	configPath := r.URL.Query().Get("configPath")
+	originalName := r.URL.Query().Get("originalName")
+	clusterID := r.URL.Query().Get("clusterID")
+
+	var configName string
+
+	if originalName != "" && clusterID != "" {
+		configName = originalName
+	} else {
+		configName = name
+	}
+
+	if err := kubeconfig.RemoveContextFromFile(configName, configPath); err != nil {
+		c.handleError(w, ctx, span, err, "failed to remove cluster from kubeconfig", http.StatusInternalServerError)
+	}
 }
 
 // Get path of kubeconfig we load headlamp with from source.
@@ -1959,7 +1960,7 @@ func (c *HeadlampConfig) getKubeConfigPath(source string) (string, error) {
 		return c.KubeConfigPath, nil
 	}
 
-	return defaultKubeConfigPersistenceFile()
+	return defaultHeadlampKubeConfigFile()
 }
 
 // Handler for renaming a stateless cluster.
