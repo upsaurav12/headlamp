@@ -45,7 +45,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/auth"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
-	"github.com/kubernetes-sigs/headlamp/backend/pkg/config"
+	cfg "github.com/kubernetes-sigs/headlamp/backend/pkg/config"
+
 	headlampcfg "github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/helm"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
@@ -76,7 +77,7 @@ type HeadlampConfig struct {
 	oidcUseAccessToken        bool
 	cache                     cache.Cache[interface{}]
 	multiplexer               *Multiplexer
-	telemetryConfig           config.Config
+	telemetryConfig           cfg.Config
 	oidcScopes                []string
 	telemetryHandler          *telemetry.RequestHandler
 }
@@ -1956,7 +1957,7 @@ func (c *HeadlampConfig) handleRemoveKubeConfig(
 
 // Get path of kubeconfig we load headlamp with from source.
 func (c *HeadlampConfig) getKubeConfigPath(source string) (string, error) {
-	if source == "kubeconfig" {
+	if source == kubeConfigSource {
 		return c.KubeConfigPath, nil
 	}
 
