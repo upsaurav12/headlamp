@@ -17,7 +17,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,12 +32,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
-)
-
-var (
-	clientSet    *kubernetes.Clientset
-	clientSetErr error
-	once         sync.Once
 )
 
 type responseCapture struct {
@@ -186,27 +179,39 @@ func SetHeadersToCache(responseHeaders http.Header, encoding string) http.Header
 	return cacheHeader
 }
 
-// getClientMD is used to create clientset where it will be created once
-// and later it will be reuse. This helps to reduce time.
-func getClientMD(k *kubeconfig.Context,
-	token string,
-) (*kubernetes.Clientset, error) {
-	once.Do(func() {
-		clientset, err := k.ClientSetWithToken(token)
-		if err != nil {
-			clientSetErr = fmt.Errorf("error while creating clientset %w", err)
-			return
-		}
+var (
+	clientsetCache = make(map[string]*kubernetes.Clientset)
+	mu             sync.Mutex
+)
 
-		clientSet = clientset
-		clientSetErr = nil
-	})
+// getClientMD is used to get a clientset for the given context and token.
+// It will reuse clientsets if a matching one is already cached.
+func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
+	contextKey := strings.Split(k.ClusterID, "+")
+	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], hashToken(token))
 
-	if clientSetErr != nil {
-		return clientSet, clientSetErr
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cs, found := clientsetCache[cacheKey]; found {
+		return cs, nil
 	}
 
-	return clientSet, nil
+	cs, err := k.ClientSetWithToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("error while creating clientset for key %s: %w", cacheKey, err)
+	}
+
+	clientsetCache[cacheKey] = cs
+
+	return cs, nil
+}
+
+func hashToken(token string) string {
+	if len(token) > 32 {
+		return token[:32]
+	}
+	return token
 }
 
 // This function checks the user's permission to access the resource.
@@ -243,7 +248,13 @@ func IsAllowed(url *url.URL,
 		review,
 		metav1.CreateOptions{},
 	)
+
+	fmt.Println("Result: ", result)
+
+	fmt.Println("Allowed: ", result.Status.Allowed)
+
 	if err != nil {
+		fmt.Println("Error:", err)
 		return false, err
 	}
 
@@ -255,11 +266,7 @@ func IsAllowed(url *url.URL,
 // and returns true ,Otherwise it will return false.
 func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w http.ResponseWriter) (bool, error) {
 	k8Resource, err := k8scache.Get(context.Background(), key)
-	if err == nil && strings.TrimSpace(k8Resource) != "" {
-		if !isAllowed {
-			return false, errors.New("user not authorized")
-		}
-
+	if err == nil && strings.TrimSpace(k8Resource) != "" && isAllowed {
 		var cachedData CachedResponseData
 
 		cachedData, err := UnmarshalCachedata(k8Resource, cachedData)
@@ -270,12 +277,13 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 		SetHeader(cachedData, w)
 
 		_, writeErr := w.Write([]byte(cachedData.Body))
-
+		fmt.Println("Loading from cache!!!")
 		if writeErr == nil {
 			return true, nil
 		}
 	}
 
+	fmt.Println("Error while load from cache!!")
 	return false, nil
 }
 
