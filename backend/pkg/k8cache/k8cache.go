@@ -211,6 +211,7 @@ func hashToken(token string) string {
 	if len(token) > 32 {
 		return token[:32]
 	}
+
 	return token
 }
 
@@ -277,13 +278,11 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 		SetHeader(cachedData, w)
 
 		_, writeErr := w.Write([]byte(cachedData.Body))
-		fmt.Println("Loading from cache!!!")
 		if writeErr == nil {
 			return true, nil
 		}
 	}
 
-	fmt.Println("Error while load from cache!!")
 	return false, nil
 }
 
