@@ -57,7 +57,7 @@ func (r *responseCapture) Write(b []byte) (int, error) {
 }
 
 // Initialize responseCapture with a http.ResponseWriter and empty bytes.Buffer for the body.
-func Initialize(w http.ResponseWriter) *responseCapture {
+func CreateResponseCapture(w http.ResponseWriter) *responseCapture {
 	return &responseCapture{
 		ResponseWriter: w,
 		Body:           &bytes.Buffer{},
@@ -188,7 +188,7 @@ var (
 // It will reuse clientsets if a matching one is already cached.
 func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
 	contextKey := strings.Split(k.ClusterID, "+")
-	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], hashToken(token))
+	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], token)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -205,14 +205,6 @@ func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, er
 	clientsetCache[cacheKey] = cs
 
 	return cs, nil
-}
-
-func hashToken(token string) string {
-	if len(token) > 32 {
-		return token[:32]
-	}
-
-	return token
 }
 
 // This function checks the user's permission to access the resource.
@@ -235,11 +227,24 @@ func IsAllowed(url *url.URL,
 
 	last := parts[len(parts)-1]
 
+	var kubeVerb string
+
+	switch r.Method {
+	case "GET":
+		if r.URL.Query().Get("watch") == "1" {
+			kubeVerb = "watch"
+		} else {
+			kubeVerb = "get"
+		}
+	default:
+		kubeVerb = "unknown"
+	}
+
 	review := &authorizationv1.SelfSubjectAccessReview{
 		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
 				Resource: last,
-				Verb:     "get",
+				Verb:     kubeVerb,
 			},
 		},
 	}
@@ -249,13 +254,7 @@ func IsAllowed(url *url.URL,
 		review,
 		metav1.CreateOptions{},
 	)
-
-	fmt.Println("Result: ", result)
-
-	fmt.Println("Allowed: ", result.Status.Allowed)
-
 	if err != nil {
-		fmt.Println("Error:", err)
 		return false, err
 	}
 
@@ -289,7 +288,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 // If the key was not found inside the cache then this will make actual call to k8's
 // and this will capture the response body and convert the captured response to string.
 // After converting it will store the response with the key and TTL of 10*min.
-func RequestToK8sAndStore(k8scache cache.Cache[string], k *kubeconfig.Context,
+func RequestToK8sAndStore(k8scache cache.Cache[string],
 	url *url.URL,
 	rcw *responseCapture,
 	r *http.Request,
@@ -326,4 +325,78 @@ func RequestToK8sAndStore(k8scache cache.Cache[string], k *kubeconfig.Context,
 	}
 
 	return nil
+}
+
+func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key string,
+	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
+) {
+	served, _ := LoadfromCache(k8scache, true, key, w)
+	if served {
+		return
+	}
+
+	next.ServeHTTP(rcw, r)
+
+	err := RequestToK8sAndStore(k8scache, r.URL, rcw, r, key)
+	if err != nil {
+		return
+	}
+}
+
+type Details struct {
+	Kind string `son:"kind"`
+}
+
+type MetaData struct {
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+type AuthErrResponse struct {
+	Kind       string   `json:"kind"`
+	APIVersion string   `json:"apiVersion"`
+	MetaData   MetaData `json:"metadata"`
+	Message    string   `json:"message"`
+	Reason     string   `json:"reason"`
+	Details    Details  `json:"details"`
+	Code       int      `json:"code"`
+}
+
+func ReturnAuthErrorResponse(r *http.Request, contextKey string) ([]byte, error) {
+	apiPath := mux.Vars(r)["api"]
+	parts := strings.Split(apiPath, "/")
+
+	last := parts[len(parts)-1]
+
+	var kubeVerb string
+
+	switch r.Method {
+	case "GET":
+		if r.URL.Query().Get("watch") == "1" {
+			kubeVerb = "watch"
+		} else {
+			kubeVerb = "get"
+		}
+	default:
+		kubeVerb = "unknown"
+	}
+
+	authErrorResponse := AuthErrResponse{
+		Kind:       "Status",
+		APIVersion: "v1",
+		MetaData:   MetaData{},
+		Message: fmt.Sprintf("%s is forbidden: User \"system:serviceaccount:default:%s\" cannot", last, contextKey) +
+			fmt.Sprintf("%s resource \"%s\" in API group \"\" at the cluster scope", kubeVerb, last),
+		Reason: "Forbidden",
+		Details: Details{
+			Kind: last,
+		},
+		Code: 403,
+	}
+
+	response, err := json.Marshal(authErrorResponse)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
 }

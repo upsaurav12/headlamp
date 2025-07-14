@@ -28,9 +28,7 @@ import (
 
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/k8cache"
-	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 	"github.com/stretchr/testify/assert"
-	"k8s.io/client-go/tools/clientcmd/api"
 )
 
 // MockCache is struct which help to mock caching for testing purpose.
@@ -107,7 +105,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("initializes responseCapture with defaults", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
 
-		rc := k8cache.Initialize(recorder)
+		rc := k8cache.CreateResponseCapture(recorder)
 
 		assert.NotNil(t, rc)
 		assert.Equal(t, http.StatusOK, rc.StatusCode)
@@ -436,17 +434,12 @@ func TestRequestToK8AndStore(t *testing.T) {
 	tests := []struct {
 		name          string
 		urlObj        *url.URL
-		kContext      kubeconfig.Context
 		key           string
 		expectedError error
 	}{
 		{
-			name:   "valid workflow",
-			urlObj: &url.URL{Path: "/api/v1/pods"},
-			kContext: kubeconfig.Context{
-				Name:    "hello-world",
-				Cluster: &api.Cluster{},
-			},
+			name:          "valid workflow",
+			urlObj:        &url.URL{Path: "/api/v1/pods"},
 			key:           "1234",
 			expectedError: nil,
 		},
@@ -455,10 +448,10 @@ func TestRequestToK8AndStore(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rw := httptest.NewRecorder()
-			rcw := k8cache.Initialize(rw)
+			rcw := k8cache.CreateResponseCapture(rw)
 			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
 			newCache := NewMockCache()
-			err := k8cache.RequestToK8sAndStore(newCache, &tc.kContext, tc.urlObj, rcw, r, tc.key)
+			err := k8cache.RequestToK8sAndStore(newCache, tc.urlObj, rcw, r, tc.key)
 			assert.NoError(t, err)
 		})
 	}

@@ -92,10 +92,26 @@ func main() {
 	})
 }
 
+func writeResponseToClient(response []byte, w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, writeErr := w.Write(response)
+
+	if writeErr != nil {
+		return writeErr
+	}
+
+	return nil
+}
+
 // CacheMiddleWare is Middleware for Caching purpose.
 func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" || r.Method == "UPDATE" || r.Method == "DELETE" || r.Method == "PUT" {
+				return
+			}
+
 			ctx := r.Context()
 			ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
 				attribute.String("cluster", mux.Vars(r)["clusterName"]),
@@ -120,7 +136,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			rcw := k8cache.Initialize(w)
+			rcw := k8cache.CreateResponseCapture(w)
 
 			key, err := k8cache.GenerateKey(r.URL, contextKey)
 			if err != nil {
@@ -128,16 +144,21 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			isAllowed, err := k8cache.IsAllowed(r.URL, kContext, w, r)
-			if err != nil {
-				next.ServeHTTP(w, r)
+			isAllowed, authErr := k8cache.IsAllowed(r.URL, kContext, w, r)
+			if authErr != nil {
+				k8cache.StoreAfterAuthError(k8scache, next, key, w, r, rcw)
+				return
+			} else if !isAllowed {
+				response, _ := k8cache.ReturnAuthErrorResponse(r, contextKey)
+				err = writeResponseToClient(response, w)
+				c.handleError(w, ctx, span, err, "err while responding to client", http.StatusInternalServerError)
+
 				return
 			}
 
 			served, err := k8cache.LoadfromCache(k8scache, isAllowed, key, w)
 			if err != nil {
 				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to load from cache", http.StatusServiceUnavailable)
-				return
 			}
 
 			if served {
@@ -147,7 +168,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 
 			next.ServeHTTP(rcw, r)
 
-			err = k8cache.RequestToK8sAndStore(k8scache, kContext, r.URL, rcw, r, key)
+			err = k8cache.RequestToK8sAndStore(k8scache, r.URL, rcw, r, key)
 			if err != nil {
 				c.handleError(w, ctx, span, errors.New(kContext.Error), "error while storing into cache", http.StatusBadRequest)
 				return
