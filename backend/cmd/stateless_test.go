@@ -81,8 +81,8 @@ func TestStatelessClustersKubeConfig(t *testing.T) {
 					KubeConfigPath:        "",
 					EnableDynamicClusters: true,
 					KubeConfigStore:       kubeConfigStore,
+					Cache:                 cache,
 				},
-				cache: cache,
 			}
 			handler := createHeadlampHandler(&c)
 
@@ -138,8 +138,8 @@ func TestStatelessClusterApiRequest(t *testing.T) {
 					KubeConfigStore:       kubeConfigStore,
 					TelemetryHandler:      &telemetry.RequestHandler{},
 					TelemetryConfig:       GetDefaultTestTelemetryConfig(),
+					Cache:                 cache,
 				},
-				cache: cache,
 			}
 			handler := createHeadlampHandler(&c)
 			headers := map[string]string{
@@ -159,10 +159,9 @@ func TestStatelessClusterApiRequest(t *testing.T) {
 			resp := httptest.NewRecorder()
 			handler.ServeHTTP(resp, req)
 
-			configuredClusters := c.getClusters()
+			configuredClusters := c.GetClusters()
 
-			var cluster *Cluster
-
+			var cluster *headlampconfig.Cluster
 			// Get cluster we created
 			for i, val := range configuredClusters {
 				if val.Name == tc.name {

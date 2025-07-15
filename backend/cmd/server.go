@@ -22,7 +22,7 @@ import (
 
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/config"
-	"github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
+	headlampconfig "github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/logger"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/plugins"
@@ -73,16 +73,16 @@ func main() {
 				StdoutTraceEnabled: conf.StdoutTraceEnabled,
 				SamplingRate:       conf.SamplingRate,
 			},
+			OidcClientID:              conf.OidcClientID,
+			OidcValidatorClientID:     conf.OidcValidatorClientID,
+			OidcClientSecret:          conf.OidcClientSecret,
+			OidcIdpIssuerURL:          conf.OidcIdpIssuerURL,
+			OidcValidatorIdpIssuerURL: conf.OidcValidatorIdpIssuerURL,
+			OidcScopes:                strings.Split(conf.OidcScopes, ","),
+			OidcUseAccessToken:        conf.OidcUseAccessToken,
+			Cache:                     cache,
 		},
-		oidcClientID:              conf.OidcClientID,
-		oidcValidatorClientID:     conf.OidcValidatorClientID,
-		oidcClientSecret:          conf.OidcClientSecret,
-		oidcIdpIssuerURL:          conf.OidcIdpIssuerURL,
-		oidcValidatorIdpIssuerURL: conf.OidcValidatorIdpIssuerURL,
-		oidcScopes:                strings.Split(conf.OidcScopes, ","),
-		oidcUseAccessToken:        conf.OidcUseAccessToken,
-		cache:                     cache,
-		multiplexer:               multiplexer,
+		multiplexer: multiplexer,
 	})
 }
 
