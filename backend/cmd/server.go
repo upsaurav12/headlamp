@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/plugins"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/telemetry"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -92,19 +94,36 @@ func main() {
 	})
 }
 
-func writeResponseToClient(response []byte, w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_, writeErr := w.Write(response)
+// GetContextKeyAndContext returns Kcontext , ContextKey for using these in CacheMiddleWare function.
+// It also return span and ctx that will help while using handleError function.
+func GetContextKeyAndKContext(w http.ResponseWriter,
+	r *http.Request, c *HeadlampConfig) (context.Context,
+	trace.Span, string, *kubeconfig.Context, error,
+) {
+	ctx := r.Context()
+	ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
+		attribute.String("cluster", mux.Vars(r)["clusterName"]),
+	)
 
-	if writeErr != nil {
-		return writeErr
+	defer span.End()
+
+	contextKey, err := c.getContextKeyForRequest(r)
+	if err != nil {
+		c.handleError(w, ctx, span, err, "failed to get context Key:", http.StatusBadRequest)
+		return nil, nil, "", nil, err
 	}
 
-	return nil
+	kContext, err := c.KubeConfigStore.GetContext(contextKey)
+	if err != nil {
+		c.handleError(w, ctx, span, err, "failed to get context", http.StatusNotFound)
+		return nil, nil, "", nil, err
+	}
+
+	return ctx, span, contextKey, kContext, nil
 }
 
-// CacheMiddleWare is Middleware for Caching purpose.
+// CacheMiddleWare is Middleware for Caching purpose. It involves generating key for a request,
+// authorizing user , store resource data in cache and returns data if key is present.
 func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,22 +131,9 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			ctx := r.Context()
-			ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
-				attribute.String("cluster", mux.Vars(r)["clusterName"]),
-			)
-
-			defer span.End()
-
-			contextKey, err := c.getContextKeyForRequest(r)
+			ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
 			if err != nil {
-				c.handleError(w, ctx, span, err, "failed to get context key", http.StatusBadRequest)
-				return
-			}
-
-			kContext, err := c.KubeConfigStore.GetContext(contextKey)
-			if err != nil {
-				c.handleError(w, ctx, span, err, "failed to get context", http.StatusNotFound)
+				c.handleError(w, ctx, span, err, "failed to get context and Kcontext", http.StatusNotFound)
 				return
 			}
 
@@ -150,7 +156,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			} else if !isAllowed {
 				response, _ := k8cache.ReturnAuthErrorResponse(r, contextKey)
-				err = writeResponseToClient(response, w)
+				err = k8cache.WriteResponseToClient(response, w)
 				c.handleError(w, ctx, span, err, "err while responding to client", http.StatusInternalServerError)
 
 				return
@@ -168,7 +174,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 
 			next.ServeHTTP(rcw, r)
 
-			err = k8cache.RequestToK8sAndStore(k8scache, r.URL, rcw, r, key)
+			err = k8cache.RequestK8ClusterAPIAndStore(k8scache, r.URL, rcw, r, key)
 			if err != nil {
 				c.handleError(w, ctx, span, errors.New(kContext.Error), "error while storing into cache", http.StatusBadRequest)
 				return

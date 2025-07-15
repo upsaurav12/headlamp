@@ -17,6 +17,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,7 +57,7 @@ func (r *responseCapture) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-// Initialize responseCapture with a http.ResponseWriter and empty bytes.Buffer for the body.
+// CreateResponseCapture initializes responseCapture with a http.ResponseWriter and empty bytes.Buffer for the body.
 func CreateResponseCapture(w http.ResponseWriter) *responseCapture {
 	return &responseCapture{
 		ResponseWriter: w,
@@ -162,10 +163,10 @@ func MarshalToStore(cacheData CachedResponseData) ([]byte, error) {
 
 const gzipEncoding = "gzip"
 
-// This ensures that the cached headers accurately reflect the state of the
+// FilterHeaderCache ensures that the cached headers accurately reflect the state of the
 // decompressed body that is being stored, and prevents client side decompression
 // issues serving from cache.
-func SetHeadersToCache(responseHeaders http.Header, encoding string) http.Header {
+func FilterHeadersForCache(responseHeaders http.Header, encoding string) http.Header {
 	cacheHeader := make(http.Header)
 
 	for idx, header := range responseHeaders {
@@ -188,6 +189,11 @@ var (
 // It will reuse clientsets if a matching one is already cached.
 func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
 	contextKey := strings.Split(k.ClusterID, "+")
+	if len(contextKey) < 2 {
+		// log and handle gracefully
+		return nil, errors.New("unexpected format in getClientMD")
+	}
+
 	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], token)
 
 	mu.Lock()
@@ -207,21 +213,8 @@ func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, er
 	return cs, nil
 }
 
-// This function checks the user's permission to access the resource.
-// If the user is authorized and has permission to view the resources, it returns true.
-// Otherwise, it returns false if authorization fails.
-func IsAllowed(url *url.URL,
-	k *kubeconfig.Context,
-	w http.ResponseWriter,
-	r *http.Request,
-) (bool, error) {
-	token := r.Header.Get("Authorization")
-
-	clientset, err := getClientMD(k, token)
-	if err != nil {
-		return false, err
-	}
-
+// GetKindAndVerb returns Kind and Verb ( get , watch etc ) from the requested URL.
+func GetKindAndVerb(r *http.Request) (string, string) {
 	apiPath := mux.Vars(r)["api"]
 	parts := strings.Split(apiPath, "/")
 
@@ -239,6 +232,26 @@ func IsAllowed(url *url.URL,
 	default:
 		kubeVerb = "unknown"
 	}
+
+	return last, kubeVerb
+}
+
+// This function checks the user's permission to access the resource.
+// If the user is authorized and has permission to view the resources, it returns true.
+// Otherwise, it returns false if authorization fails.
+func IsAllowed(url *url.URL,
+	k *kubeconfig.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+) (bool, error) {
+	token := r.Header.Get("Authorization")
+
+	clientset, err := getClientMD(k, token)
+	if err != nil {
+		return false, err
+	}
+
+	last, kubeVerb := GetKindAndVerb(r)
 
 	review := &authorizationv1.SelfSubjectAccessReview{
 		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
@@ -288,7 +301,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w h
 // If the key was not found inside the cache then this will make actual call to k8's
 // and this will capture the response body and convert the captured response to string.
 // After converting it will store the response with the key and TTL of 10*min.
-func RequestToK8sAndStore(k8scache cache.Cache[string],
+func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
 	url *url.URL,
 	rcw *responseCapture,
 	r *http.Request,
@@ -303,7 +316,7 @@ func RequestToK8sAndStore(k8scache cache.Cache[string],
 		return err
 	}
 
-	headersToCache := SetHeadersToCache(capturedHeaders, encoding)
+	headersToCache := FilterHeadersForCache(capturedHeaders, encoding)
 
 	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
 		cachedData := CachedResponseData{
@@ -327,6 +340,8 @@ func RequestToK8sAndStore(k8scache cache.Cache[string],
 	return nil
 }
 
+// StoreAfterAuthError Stores resource(pods , nodes , etc) and returns to client
+// if we get error while Authorizing user's permissions for every resources.
 func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key string,
 	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
 ) {
@@ -337,7 +352,7 @@ func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key st
 
 	next.ServeHTTP(rcw, r)
 
-	err := RequestToK8sAndStore(k8scache, r.URL, rcw, r, key)
+	err := RequestK8ClusterAPIAndStore(k8scache, r.URL, rcw, r, key)
 	if err != nil {
 		return
 	}
@@ -351,6 +366,7 @@ type MetaData struct {
 	ResourceVersion string `json:"resourceVersion"`
 }
 
+// AuthErrorResponse is the Error Response for UnAuthorized user.
 type AuthErrResponse struct {
 	Kind       string   `json:"kind"`
 	APIVersion string   `json:"apiVersion"`
@@ -361,24 +377,9 @@ type AuthErrResponse struct {
 	Code       int      `json:"code"`
 }
 
+// ReturnAuthErrorResponse return Unauthorizated Error when the user is not Authorized to access any resources.
 func ReturnAuthErrorResponse(r *http.Request, contextKey string) ([]byte, error) {
-	apiPath := mux.Vars(r)["api"]
-	parts := strings.Split(apiPath, "/")
-
-	last := parts[len(parts)-1]
-
-	var kubeVerb string
-
-	switch r.Method {
-	case "GET":
-		if r.URL.Query().Get("watch") == "1" {
-			kubeVerb = "watch"
-		} else {
-			kubeVerb = "get"
-		}
-	default:
-		kubeVerb = "unknown"
-	}
+	last, kubeVerb := GetKindAndVerb(r)
 
 	authErrorResponse := AuthErrResponse{
 		Kind:       "Status",
@@ -399,4 +400,18 @@ func ReturnAuthErrorResponse(r *http.Request, contextKey string) ([]byte, error)
 	}
 
 	return response, nil
+}
+
+// WriteResponseToClient returns UnAuthorized error response when the user Unauthorized.
+// This helps to prevent requests to make actual call to clusterAPI.
+func WriteResponseToClient(response []byte, w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, writeErr := w.Write(response)
+
+	if writeErr != nil {
+		return writeErr
+	}
+
+	return nil
 }

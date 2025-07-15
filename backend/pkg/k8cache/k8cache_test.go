@@ -369,7 +369,7 @@ func TestSetHeaderToCache(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			header := k8cache.SetHeadersToCache(tc.responseHeader, tc.encoding)
+			header := k8cache.FilterHeadersForCache(tc.responseHeader, tc.encoding)
 			assert.Equal(t, tc.expectedHeader, header)
 		})
 	}
@@ -451,7 +451,7 @@ func TestRequestToK8AndStore(t *testing.T) {
 			rcw := k8cache.CreateResponseCapture(rw)
 			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
 			newCache := NewMockCache()
-			err := k8cache.RequestToK8sAndStore(newCache, tc.urlObj, rcw, r, tc.key)
+			err := k8cache.RequestK8ClusterAPIAndStore(newCache, tc.urlObj, rcw, r, tc.key)
 			assert.NoError(t, err)
 		})
 	}
