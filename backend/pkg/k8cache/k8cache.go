@@ -146,6 +146,7 @@ func SetHeader(cacheData CachedResponseData, w http.ResponseWriter) {
 		w.Header()[idx] = header
 	}
 
+	w.Header().Set("X-HEADLAMP-CACHE", "true")
 	w.WriteHeader(cacheData.StatusCode)
 }
 
@@ -277,7 +278,11 @@ func IsAllowed(url *url.URL,
 // If the user has the permission to view the resources then it will check if the generated key is found
 // in the cache if the key is present in the cache then it will return directly to the client in []byte form
 // and returns true ,Otherwise it will return false.
-func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w http.ResponseWriter) (bool, error) {
+func LoadfromCache(k8scache cache.Cache[string], isAllowed bool, key string, w http.ResponseWriter, r *http.Request) (bool, error) {
+	if r.Method == "PUT" || r.Method == "DELETE" || r.Method == "POST" || r.Method == "OPTIONS" {
+		return false, errors.New("method is non-cachable")
+	}
+
 	k8Resource, err := k8scache.Get(context.Background(), key)
 	if err == nil && strings.TrimSpace(k8Resource) != "" && isAllowed {
 		var cachedData CachedResponseData
@@ -345,7 +350,7 @@ func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
 func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key string,
 	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
 ) {
-	served, _ := LoadfromCache(k8scache, true, key, w)
+	served, _ := LoadfromCache(k8scache, true, key, w, r)
 	if served {
 		return
 	}

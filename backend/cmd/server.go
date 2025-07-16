@@ -127,10 +127,6 @@ func GetContextKeyAndKContext(w http.ResponseWriter,
 func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == "POST" || r.Method == "UPDATE" || r.Method == "DELETE" || r.Method == "PUT" {
-				return
-			}
-
 			ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
 			if err != nil {
 				c.handleError(w, ctx, span, err, "failed to get context and Kcontext", http.StatusNotFound)
@@ -162,7 +158,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			served, err := k8cache.LoadfromCache(k8scache, isAllowed, key, w)
+			served, err := k8cache.LoadfromCache(k8scache, isAllowed, key, w, r)
 			if err != nil {
 				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to load from cache", http.StatusServiceUnavailable)
 			}

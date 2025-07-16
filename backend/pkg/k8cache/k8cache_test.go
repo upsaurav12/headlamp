@@ -401,12 +401,14 @@ func TestLoadfromCache(t *testing.T) {
 		key           string
 		isLoaded      bool
 		value         string
+		urlObj        *url.URL
 		expectedError error
 	}{
 		{
 			name:          "Served from cache",
 			key:           "test-key",
 			value:         `{"Body":"from_cache","StatusCode":200}`,
+			urlObj:        &url.URL{Path: "/api/v1/pods"},
 			isLoaded:      true,
 			expectedError: nil,
 		},
@@ -422,7 +424,9 @@ func TestLoadfromCache(t *testing.T) {
 
 			w := httptest.NewRecorder()
 
-			isLoaded, err := k8cache.LoadfromCache(mockCache, tc.isLoaded, tc.key, w)
+			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
+
+			isLoaded, err := k8cache.LoadfromCache(mockCache, tc.isLoaded, tc.key, w, r)
 			assert.Equal(t, tc.isLoaded, isLoaded)
 			assert.NoError(t, err)
 		})
