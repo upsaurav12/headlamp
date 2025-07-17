@@ -1356,6 +1356,7 @@ func clusterRequestHandler(c *HeadlampConfig) http.Handler {
 		ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
 		if err != nil {
 			c.handleError(w, ctx, span, err, "error while retrieving context and kContext", http.StatusBadRequest)
+			return
 		}
 
 		if kContext.Error != "" {

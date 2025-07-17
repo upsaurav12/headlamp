@@ -252,7 +252,7 @@ func TestUnMarshallCacheData(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := k8cache.UnmarshalCachedata(tc.cacheResource, tc.cacheData)
+			result, err := k8cache.UnmarshalCacheData(tc.cacheResource, tc.cacheData)
 			assert.Equal(t, tc.expectedCachedResponse, result)
 
 			if err != nil {
@@ -426,7 +426,7 @@ func TestLoadfromCache(t *testing.T) {
 
 			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
 
-			isLoaded, err := k8cache.LoadfromCache(mockCache, tc.isLoaded, tc.key, w, r)
+			isLoaded, err := k8cache.LoadFromCache(mockCache, tc.isLoaded, tc.key, w, r)
 			assert.Equal(t, tc.isLoaded, isLoaded)
 			assert.NoError(t, err)
 		})

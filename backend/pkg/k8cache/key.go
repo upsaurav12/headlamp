@@ -29,8 +29,8 @@ type CacheKey struct {
 }
 
 // It returns a computed key string which is unique.
-func HashObject(any interface{}) (string, error) {
-	out, err := json.Marshal(any)
+func HashObject(obj interface{}) (string, error) {
+	out, err := json.Marshal(obj)
 	if err != nil {
 		return "", err
 	}

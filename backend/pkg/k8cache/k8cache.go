@@ -128,7 +128,7 @@ func GenerateKey(url *url.URL, contextID string) (string, error) {
 // back into a CacheResposeData struct. This function is used to recontructing
 // the full HTTP response (status, headers, body) when serving the k8's to the client.
 // this is the essential part as it gives the clarity about the incoming k8;s requests.
-func UnmarshalCachedata(cacheResource string,
+func UnmarshalCacheData(cacheResource string,
 	cachedData CachedResponseData,
 ) (CachedResponseData, error) {
 	err := json.Unmarshal([]byte(cacheResource), &cachedData)
@@ -139,7 +139,7 @@ func UnmarshalCachedata(cacheResource string,
 	return cachedData, nil
 }
 
-// This function is used when serving response from cache to ensure the client
+// SetHeader function help to serve response from cache to ensure the client
 // receives correct metadata about the response.
 func SetHeader(cacheData CachedResponseData, w http.ResponseWriter) {
 	for idx, header := range cacheData.Headers {
@@ -188,11 +188,11 @@ var (
 
 // getClientMD is used to get a clientset for the given context and token.
 // It will reuse clientsets if a matching one is already cached.
-func getClientMD(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
+func getClientSet(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
 	contextKey := strings.Split(k.ClusterID, "+")
 	if len(contextKey) < 2 {
 		// log and handle gracefully
-		return nil, errors.New("unexpected format in getClientMD")
+		return nil, errors.New("unexpected format in getClientSet")
 	}
 
 	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], token)
@@ -247,7 +247,7 @@ func IsAllowed(url *url.URL,
 ) (bool, error) {
 	token := r.Header.Get("Authorization")
 
-	clientset, err := getClientMD(k, token)
+	clientset, err := getClientSet(k, token)
 	if err != nil {
 		return false, err
 	}
@@ -275,10 +275,10 @@ func IsAllowed(url *url.URL,
 	return result.Status.Allowed, nil
 }
 
-// If the user has the permission to view the resources then it will check if the generated key is found
-// in the cache if the key is present in the cache then it will return directly to the client in []byte form
-// and returns true ,Otherwise it will return false.
-func LoadfromCache(k8scache cache.Cache[string], isAllowed bool,
+// LoadFromCache ensure that if the user has the permission to view the resources then
+// it will check if the generated key is found in the cache if the key is present in the cache
+// then it will return directly to the client in []byte form and returns true ,Otherwise it will return false.
+func LoadFromCache(k8scache cache.Cache[string], isAllowed bool,
 	key string, w http.ResponseWriter, r *http.Request,
 ) (bool, error) {
 	if r.Method == "PUT" || r.Method == "DELETE" || r.Method == "POST" || r.Method == "OPTIONS" {
@@ -289,7 +289,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool,
 	if err == nil && strings.TrimSpace(k8Resource) != "" && isAllowed {
 		var cachedData CachedResponseData
 
-		cachedData, err := UnmarshalCachedata(k8Resource, cachedData)
+		cachedData, err := UnmarshalCacheData(k8Resource, cachedData)
 		if err != nil {
 			return false, err
 		}
@@ -305,7 +305,7 @@ func LoadfromCache(k8scache cache.Cache[string], isAllowed bool,
 	return false, nil
 }
 
-// If the key was not found inside the cache then this will make actual call to k8's
+// RequestK8ClusterAPIAndStore ensures if the key was not found inside the cache then this will make actual call to k8's
 // and this will capture the response body and convert the captured response to string.
 // After converting it will store the response with the key and TTL of 10*min.
 func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
@@ -352,7 +352,7 @@ func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
 func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key string,
 	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
 ) {
-	served, _ := LoadfromCache(k8scache, true, key, w, r)
+	served, _ := LoadFromCache(k8scache, true, key, w, r)
 	if served {
 		return
 	}
@@ -366,7 +366,7 @@ func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key st
 }
 
 type Details struct {
-	Kind string `son:"kind"`
+	Kind string `json:"kind"`
 }
 
 type MetaData struct {

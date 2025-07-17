@@ -158,7 +158,7 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 				return
 			}
 
-			served, err := k8cache.LoadfromCache(k8scache, isAllowed, key, w, r)
+			served, err := k8cache.LoadFromCache(k8scache, isAllowed, key, w, r)
 			if err != nil {
 				c.handleError(w, ctx, span, errors.New(kContext.Error), "failed to load from cache", http.StatusServiceUnavailable)
 			}
