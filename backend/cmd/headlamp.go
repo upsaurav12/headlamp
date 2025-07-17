@@ -1414,11 +1414,9 @@ func handleClusterAPI(c *HeadlampConfig, router *mux.Router) {
 
 	cacheMiddleware := CacheMiddleWare(c)
 
-	handler = cacheMiddleware(handler)
-
-	// if c.CacheEnabled {
-	// 	handler = cacheMiddleware(handler)
-	// }
+	if c.CacheEnabled {
+		handler = cacheMiddleware(handler)
+	}
 
 	router.PathPrefix("/clusters/{clusterName}/{api:.*}").Handler(handler)
 }
