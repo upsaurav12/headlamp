@@ -1353,30 +1353,9 @@ func (c *HeadlampConfig) handleError(w http.ResponseWriter, ctx context.Context,
 
 func clusterRequestHandler(c *HeadlampConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		ctx := r.Context()
-
-		ctx, span := telemetry.CreateSpan(ctx, r, "cluster-api", "handleClusterAPI",
-			attribute.String("cluster", mux.Vars(r)["clusterName"]),
-		)
-		defer span.End()
-
-		c.telemetryHandler.RecordRequestCount(ctx, r, attribute.String("cluster", mux.Vars(r)["clusterName"]))
-		c.telemetryHandler.RecordEvent(span, "Cluster API request started")
-
-		// A deferred function to record duration metrics & log the request completion
-		defer recordRequestCompletion(c, ctx, start, r)
-
-		contextKey, err := c.getContextKeyForRequest(r)
+		ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
 		if err != nil {
-			c.handleError(w, ctx, span, err, "failed to get context key", http.StatusBadRequest)
-			return
-		}
-
-		kContext, err := c.KubeConfigStore.GetContext(contextKey)
-		if err != nil {
-			c.handleError(w, ctx, span, err, "failed to get context", http.StatusNotFound)
-			return
+			c.handleError(w, ctx, span, err, "error while retrieving context and kContext", http.StatusBadRequest)
 		}
 
 		if kContext.Error != "" {
@@ -1428,16 +1407,18 @@ func clusterRequestHandler(c *HeadlampConfig) http.Handler {
 // all the requests made to /clusters/{clusterName}/{api:.*} endpoint.
 // It parses the request and creates a proxy request to the cluster.
 // That proxy is saved in the cache with the context key.
-func handleClusterAPI(c *HeadlampConfig, router *mux.Router) { //nolint:funlen
+func handleClusterAPI(c *HeadlampConfig, router *mux.Router) {
 	clusterAPIrequest := clusterRequestHandler(c)
 
 	handler := clusterAPIrequest
 
 	cacheMiddleware := CacheMiddleWare(c)
 
-	if c.CacheEnabled {
-		handler = cacheMiddleware(handler)
-	}
+	handler = cacheMiddleware(handler)
+
+	// if c.CacheEnabled {
+	// 	handler = cacheMiddleware(handler)
+	// }
 
 	router.PathPrefix("/clusters/{clusterName}/{api:.*}").Handler(handler)
 }
