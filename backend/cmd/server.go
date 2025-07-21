@@ -128,6 +128,10 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
+			if span != nil {
+				defer span.End()
+			}
+
 			if err != nil {
 				c.handleError(w, ctx, span, err, "failed to get context and Kcontext", http.StatusNotFound)
 				return
@@ -148,7 +152,8 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 
 			isAllowed, authErr := k8cache.IsAllowed(r.URL, kContext, w, r)
 			if authErr != nil {
-				k8cache.StoreAfterAuthError(k8scache, next, key, w, r, rcw)
+				k8cache.StoreAfterAuthError(k8scache, isAllowed, next, key, w, r, rcw)
+
 				return
 			} else if !isAllowed {
 				response, _ := k8cache.ReturnAuthErrorResponse(r, contextKey)

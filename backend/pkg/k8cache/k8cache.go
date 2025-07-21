@@ -237,7 +237,7 @@ func GetKindAndVerb(r *http.Request) (string, string) {
 	return last, kubeVerb
 }
 
-// This function checks the user's permission to access the resource.
+// IsAllowed checks the user's permission to access the resource.
 // If the user is authorized and has permission to view the resources, it returns true.
 // Otherwise, it returns false if authorization fails.
 func IsAllowed(url *url.URL,
@@ -269,6 +269,10 @@ func IsAllowed(url *url.URL,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
+		if result.Status.Allowed {
+			return true, err
+		}
+
 		return false, err
 	}
 
@@ -349,10 +353,10 @@ func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
 
 // StoreAfterAuthError Stores resource(pods , nodes , etc) and returns to client
 // if we get error while Authorizing user's permissions for every resources.
-func StoreAfterAuthError(k8scache cache.Cache[string], next http.Handler, key string,
+func StoreAfterAuthError(k8scache cache.Cache[string], isAllowed bool, next http.Handler, key string,
 	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
 ) {
-	served, _ := LoadFromCache(k8scache, true, key, w, r)
+	served, _ := LoadFromCache(k8scache, isAllowed, key, w, r)
 	if served {
 		return
 	}
