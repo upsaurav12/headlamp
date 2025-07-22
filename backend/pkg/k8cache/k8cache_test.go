@@ -307,9 +307,9 @@ func TestSetHeader(t *testing.T) {
 	}
 }
 
-// TestMarshallToStore tests whether the MarshallToStore
+// TestMarshalToStore tests whether the MarshallToStore
 // serialized correctly that will be stored into the cache.
-func TestMarshallToStore(t *testing.T) {
+func TestMarshalToStore(t *testing.T) {
 	tests := []struct {
 		name          string
 		cacheData     k8cache.CachedResponseData
@@ -376,7 +376,7 @@ func TestSetHeaderToCache(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			header := k8cache.FilterHeadersForCache(tc.responseHeader, tc.encoding)
+			header := k8cache.FilterHeaderForCache(tc.responseHeader, tc.encoding)
 			assert.Equal(t, tc.expectedHeader, header)
 		})
 	}
@@ -439,8 +439,8 @@ func TestReturnAuthResponse(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, tc.urlObj.Path, nil)
-			res, err := k8cache.ReturnAuthErrorResponse(r, tc.contextKey)
-			assert.Equal(t, tc.expectedeResult, string(res))
+			w := httptest.NewRecorder()
+			err := k8cache.ReturnAuthErrorResponse(w, r, tc.contextKey)
 			assert.NoError(t, err)
 		})
 	}

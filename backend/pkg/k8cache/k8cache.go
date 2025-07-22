@@ -125,7 +125,7 @@ func GenerateKey(url *url.URL, contextID string) (string, error) {
 }
 
 // UnmarshalCachedData deserialize a JSON string received from cache
-// back into a CacheResposeData struct. This function is used to recontructing
+// back into a CachedResposeData struct. This function is used to recontructing
 // the full HTTP response (status, headers, body) when serving the k8's to the client.
 // this is the essential part as it gives the clarity about the incoming k8;s requests.
 func UnmarshalCacheData(cacheResource string,
@@ -164,10 +164,10 @@ func MarshalToStore(cacheData CachedResponseData) ([]byte, error) {
 
 const gzipEncoding = "gzip"
 
-// FilterHeaderCache ensures that the cached headers accurately reflect the state of the
+// FilterHeaderForCache ensures that the cached headers accurately reflect the state of the
 // decompressed body that is being stored, and prevents client side decompression
 // issues serving from cache.
-func FilterHeadersForCache(responseHeaders http.Header, encoding string) http.Header {
+func FilterHeaderForCache(responseHeaders http.Header, encoding string) http.Header {
 	cacheHeader := make(http.Header)
 
 	for idx, header := range responseHeaders {
@@ -327,7 +327,7 @@ func RequestK8ClusterAPIAndStore(k8scache cache.Cache[string],
 		return err
 	}
 
-	headersToCache := FilterHeadersForCache(capturedHeaders, encoding)
+	headersToCache := FilterHeaderForCache(capturedHeaders, encoding)
 
 	if !strings.Contains(url.Path, "selfsubjectrulesreviews") {
 		cachedData := CachedResponseData{
@@ -388,15 +388,126 @@ type AuthErrResponse struct {
 	Code       int      `json:"code"`
 }
 
+// ToSinglularLowercaseKind helps to transform resource type from <Resource-kind>List to resource.
+// It help in comparison during purging.For example if in cache their was pods resources.
+// 'pods' resource are stored as PodList, ToSinglularLowercaseKind helps to transform in pod.
+func ToSingularLowercaseKind(kind string) string {
+	base := strings.TrimSuffix(kind, "List")
+
+	if len(base) == 0 {
+		return ""
+	}
+
+	lower := strings.ToLower(base)
+
+	return lower
+}
+
+// Singular helps to remove plural from the requested url. If the request was like POST api/v1/pods it helps to removed
+// plural subject from the 'pods' and make it as 'pod'.It helps in comparison during purging the data.
+func Singular(word string) string {
+	if strings.HasSuffix(word, "s") && len(word) > 1 {
+		return word[:len(word)-1]
+	}
+
+	return word
+}
+
+// ProcessCachedItem helps to delete the data which was present in the cache and now it is now become stale.
+// It uses Delete from cache.Cache to delete the key and value with matches as staled data after making POST request.
+func ProcessCachedItem(key string, val string, last string, k8scache cache.Cache[string], next http.Handler,
+	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
+	isAllowed bool,
+) error {
+	var cachedData CachedResponseData
+
+	cachedData, err := UnmarshalCacheData(val, cachedData)
+	if err != nil {
+		return err
+	}
+
+	var items ItemsList
+
+	err = json.Unmarshal([]byte(cachedData.Body), &items)
+	if err != nil {
+		return err
+	}
+
+	kind := ToSingularLowercaseKind(items.Kind)
+	if kind == last {
+		err := k8scache.Delete(context.Background(), key)
+		if err != nil {
+			return err
+		}
+
+		StoreAfterAuthError(k8scache, isAllowed, next, key, w, r, rcw)
+	}
+
+	return nil
+}
+
+// PurgeDataForPostRequest remove the stale data which is related to POST request.
+// It uses UnmarshalCacheData to filter the response for purging the resource data.
+// It also uses GetAll method from cache.Cache to retrieve all the data that was stored.
+func PurgeDataForPostRequest(w http.ResponseWriter, r *http.Request, k8scache cache.Cache[string],
+	next http.Handler, rcw *responseCapture, isAllowed bool,
+) error {
+	lasts, _ := GetKindAndVerb(r)
+
+	last := Singular(lasts)
+
+	val, err := k8scache.GetAll(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+
+	for key, v := range val {
+		var cachedData CachedResponseData
+
+		_, err := UnmarshalCacheData(v, cachedData)
+		if err != nil {
+			return err
+		}
+
+		err = ProcessCachedItem(key, v, last, k8scache, next, w, r, rcw, isAllowed)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type ItemsList struct {
+	Kind  string        `json:"kind"`
+	Items []interface{} `json:"items"`
+}
+
+// CheckAndPurge check whether the r is POST, if the request was POST then it will let to PURGING DATA.
+func CheckAndPurge(w http.ResponseWriter, r *http.Request, k8scache cache.Cache[string],
+	next http.Handler, rcw *responseCapture, isAllowed bool,
+) error {
+	if r.Method != http.MethodPost {
+		return nil
+	}
+
+	err := PurgeDataForPostRequest(w, r, k8scache, next, rcw, isAllowed)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // ReturnAuthErrorResponse return Unauthorizated Error when the user is not Authorized to access any resources.
-func ReturnAuthErrorResponse(r *http.Request, contextKey string) ([]byte, error) {
+func ReturnAuthErrorResponse(w http.ResponseWriter, r *http.Request, contextKey string) error {
 	last, kubeVerb := GetKindAndVerb(r)
 
 	authErrorResponse := AuthErrResponse{
 		Kind:       "Status",
 		APIVersion: "v1",
 		MetaData:   MetaData{},
-		Message: fmt.Sprintf("%s is forbidden: User \"system:serviceaccount:default:%s\" cannot", last, contextKey) +
+		Message: fmt.Sprintf("%s is forbidden: User \"system:serviceaccount:default:%s\" cannot ", last, contextKey) +
 			fmt.Sprintf("%s resource \"%s\" in API group \"\" at the cluster scope", kubeVerb, last),
 		Reason: "Forbidden",
 		Details: Details{
@@ -407,10 +518,15 @@ func ReturnAuthErrorResponse(r *http.Request, contextKey string) ([]byte, error)
 
 	response, err := json.Marshal(authErrorResponse)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return response, nil
+	err = WriteResponseToClient(response, w)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // WriteResponseToClient returns UnAuthorized error response when the user Unauthorized.

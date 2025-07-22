@@ -128,10 +128,6 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, span, contextKey, kContext, err := GetContextKeyAndKContext(w, r, c)
-			if span != nil {
-				defer span.End()
-			}
-
 			if err != nil {
 				c.handleError(w, ctx, span, err, "failed to get context and Kcontext", http.StatusNotFound)
 				return
@@ -156,9 +152,10 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 
 				return
 			} else if !isAllowed {
-				response, _ := k8cache.ReturnAuthErrorResponse(r, contextKey)
-				err = k8cache.WriteResponseToClient(response, w)
-				c.handleError(w, ctx, span, err, "err while responding to client", http.StatusInternalServerError)
+				err := k8cache.ReturnAuthErrorResponse(w, r, contextKey)
+				if err != nil {
+					c.handleError(w, ctx, span, err, "error while returning to client", http.StatusInternalServerError)
+				}
 
 				return
 			}
@@ -174,6 +171,11 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 			}
 
 			next.ServeHTTP(rcw, r)
+
+			err = k8cache.CheckAndPurge(w, r, k8scache, next, rcw, isAllowed)
+			if err != nil {
+				c.handleError(w, ctx, span, err, "error while purging data", http.StatusInternalServerError)
+			}
 
 			err = k8cache.RequestK8ClusterAPIAndStore(k8scache, r.URL, rcw, r, key)
 			if err != nil {
