@@ -288,7 +288,7 @@ func IsAllowed(url *url.URL,
 func LoadFromCache(k8scache cache.Cache[string], isAllowed bool,
 	key string, w http.ResponseWriter, r *http.Request,
 ) (bool, error) {
-	if r.Method == "PUT" || r.Method == "DELETE" || r.Method == "POST" || r.Method == "OPTIONS" {
+	if r.Method != http.MethodGet {
 		return false, errors.New("method is non-cachable")
 	}
 
@@ -492,7 +492,7 @@ type ItemsList struct {
 func CheckAndPurge(w http.ResponseWriter, r *http.Request, k8scache cache.Cache[string],
 	next http.Handler, rcw *responseCapture, isAllowed bool,
 ) error {
-	if r.Method != http.MethodPost {
+	if r.Method == http.MethodGet {
 		return nil
 	}
 

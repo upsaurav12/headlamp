@@ -173,6 +173,9 @@ func CacheMiddleWare(c *HeadlampConfig) mux.MiddlewareFunc {
 
 			next.ServeHTTP(rcw, r)
 
+			// Here after making changes the request goes to CheckAndPurge to check whether
+			// the method is any these POST, PUT, PATCH, DELETE. If yes then it
+			// is proceed for purge the stale the staled stored requests.
 			err = k8cache.CheckAndPurge(w, r, k8scache, next, rcw, isAllowed)
 			if err != nil {
 				c.handleError(w, ctx, span, err, "error while purging data", http.StatusInternalServerError)
