@@ -58,6 +58,7 @@ func main() {
 			UseInCluster:          conf.InCluster,
 			KubeConfigPath:        conf.KubeConfigPath,
 			SkippedKubeContexts:   conf.SkippedKubeContexts,
+			CacheEnabled:          conf.CacheEnabled,
 			ListenAddr:            conf.ListenAddr,
 			Port:                  conf.Port,
 			DevMode:               conf.DevMode,

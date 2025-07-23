@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -189,13 +190,15 @@ var (
 // getClientMD is used to get a clientset for the given context and token.
 // It will reuse clientsets if a matching one is already cached.
 func getClientSet(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
-	contextKey := strings.Split(k.ClusterID, "+")
-	if len(contextKey) < 2 {
-		// log and handle gracefully
-		return nil, errors.New("unexpected format in getClientSet")
+	if k == nil || k.KubeContext == nil {
+		return nil, errors.New("invalid kube context")
 	}
 
-	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], token)
+	if k.KubeContext.AuthInfo == "" {
+		return nil, errors.New("missing AuthInfo in kube context")
+	}
+
+	cacheKey := fmt.Sprintf("%s-%s", k.KubeContext.AuthInfo, token)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -456,24 +459,26 @@ func PurgeDataForPostRequest(w http.ResponseWriter, r *http.Request, k8scache ca
 
 	last := Singular(lasts)
 
-	val, err := k8scache.GetAll(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-
-	for key, v := range val {
-		var cachedData CachedResponseData
-
-		_, err := UnmarshalCacheData(v, cachedData)
+	go func() {
+		val, err := k8scache.GetAll(context.Background(), nil)
 		if err != nil {
-			return err
+			log.Printf("error while using getall method: %v", err)
 		}
 
-		err = ProcessCachedItem(key, v, last, k8scache, next, w, r, rcw, isAllowed)
-		if err != nil {
-			return err
+		for key, v := range val {
+			var cachedData CachedResponseData
+
+			_, err := UnmarshalCacheData(v, cachedData)
+			if err != nil {
+				log.Printf("error while unmarshalling cacheData: %v", err)
+			}
+
+			err = ProcessCachedItem(key, v, last, k8scache, next, w, r, rcw, isAllowed)
+			if err != nil {
+				log.Printf("error while processing the cacheItem: %v", err)
+			}
 		}
-	}
+	}()
 
 	return nil
 }
