@@ -194,10 +194,6 @@ func getClientSet(k *kubeconfig.Context, token string) (*kubernetes.Clientset, e
 		return nil, errors.New("invalid kube context")
 	}
 
-	if k.KubeContext.AuthInfo == "" {
-		return nil, errors.New("missing AuthInfo in kube context")
-	}
-
 	cacheKey := fmt.Sprintf("%s-%s", k.KubeContext.AuthInfo, token)
 
 	mu.Lock()
@@ -418,7 +414,8 @@ func Singular(word string) string {
 
 // ProcessCachedItem helps to delete the data which was present in the cache and now it is now become stale.
 // It uses Delete from cache.Cache to delete the key and value with matches as staled data after making POST request.
-func ProcessCachedItem(key string, val string, last string, k8scache cache.Cache[string], next http.Handler,
+func ProcessCachedItem(key string, val string, last string, namespace string,
+	k8scache cache.Cache[string], next http.Handler,
 	w http.ResponseWriter, r *http.Request, rcw *responseCapture,
 	isAllowed bool,
 ) error {
@@ -437,7 +434,10 @@ func ProcessCachedItem(key string, val string, last string, k8scache cache.Cache
 	}
 
 	kind := ToSingularLowercaseKind(items.Kind)
-	if kind == last {
+
+	// Adding this to ensure only stored namespaces should DELETE not all secrets,
+	// thats why added namepaces to ensure only unique key will be deleted.
+	if kind == last && strings.Contains(key, "/namespaces/"+namespace) {
 		err := k8scache.Delete(context.Background(), key)
 		if err != nil {
 			return err
@@ -459,6 +459,20 @@ func PurgeDataForPostRequest(w http.ResponseWriter, r *http.Request, k8scache ca
 
 	last := Singular(lasts)
 
+	apiPath := mux.Vars(r)["api"]
+
+	// Example: apiPath = "api/v1/namespaces/test-bulk/secrets"
+	parts := strings.Split(apiPath, "/")
+	namespace := ""
+
+	// Find namespace if path contains "namespaces/<ns>"
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == "namespaces" {
+			namespace = parts[i+1]
+			break
+		}
+	}
+
 	go func() {
 		val, err := k8scache.GetAll(context.Background(), nil)
 		if err != nil {
@@ -473,7 +487,7 @@ func PurgeDataForPostRequest(w http.ResponseWriter, r *http.Request, k8scache ca
 				log.Printf("error while unmarshalling cacheData: %v", err)
 			}
 
-			err = ProcessCachedItem(key, v, last, k8scache, next, w, r, rcw, isAllowed)
+			err = ProcessCachedItem(key, v, last, namespace, k8scache, next, w, r, rcw, isAllowed)
 			if err != nil {
 				log.Printf("error while processing the cacheItem: %v", err)
 			}
