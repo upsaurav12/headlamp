@@ -190,11 +190,13 @@ var (
 // getClientMD is used to get a clientset for the given context and token.
 // It will reuse clientsets if a matching one is already cached.
 func getClientSet(k *kubeconfig.Context, token string) (*kubernetes.Clientset, error) {
-	if k == nil || k.KubeContext == nil {
-		return nil, errors.New("invalid kube context")
+	contextKey := strings.Split(k.ClusterID, "+")
+	if len(contextKey) < 2 {
+		// log and handle gracefully
+		return nil, errors.New("unexpected format in getClientSet")
 	}
 
-	cacheKey := fmt.Sprintf("%s-%s", k.KubeContext.AuthInfo, token)
+	cacheKey := fmt.Sprintf("%s-%s", contextKey[1], token)
 
 	mu.Lock()
 	defer mu.Unlock()
