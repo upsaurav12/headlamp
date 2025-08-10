@@ -1322,6 +1322,7 @@ func clusterRequestHandler(c *HeadlampConfig) http.Handler { //nolint:funlen
 		if err == nil && token != "" {
 			r.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 		}
+		handlePagination(r)
 
 		// Process WebSocket protocol headers if present
 		processWebSocketProtocolHeader(r)
